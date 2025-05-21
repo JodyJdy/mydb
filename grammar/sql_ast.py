@@ -210,8 +210,8 @@ class ColumnConstraint:
     def __init__(self,name:str):
         self.name:str = name
 class TableConstraint:
-    def __init__(self):
-        self.name:str = None
+    def __init__(self,name:str):
+        self.name:str = name
     pass
 class PrimaryKeyConstraint(ColumnConstraint):
     def __init__(self,name:str,isAsc:bool,conflict_clause:ConflictClause,autoincrement:bool):
@@ -246,17 +246,32 @@ class AsConstraint(ColumnConstraint):
         # stored or virtual
         self.stored:bool = stored
 
-class ForeignKeyOnClause(Enum):
-    DELETE_SET_NULL = 1
-    DELETE_SET_DEFAULT =2
-    DELETE_CASCADE = 3
-    DELETE_RESTRICT = 4
-    DELETE_NO_ACTION =5
-    UPDATE_SET_NULL = 6
-    UPDATE_SET_DEFAULT =7
-    UPDATE_CASCADE = 8
-    UPDATE_RESTRICT = 9
-    UPDATE_NO_ACTION =10
+
+class ForeignKeyActionType(Enum):
+    SET_NULL = 1
+    SET_DEFAULT =2
+    CASCADE = 3
+    RESTRICT = 4
+    NO_ACTION =5
+
+    @staticmethod
+    def parse_action(action:str):
+        if "NULL" == action:
+            return ForeignKeyActionType.SET_NULL
+        elif "DEFAULT" == action:
+            return ForeignKeyActionType.SET_DEFAULT
+        elif "CASCADE" == action:
+            return ForeignKeyActionType.CASCADE
+        elif "RESTRICT" == action:
+            return ForeignKeyActionType.RESTRICT
+        elif "NO" == action:
+            return ForeignKeyActionType.NO_ACTION
+
+class ForeignKeyOnClause:
+    def __init__(self,is_delete:bool,action_type:ForeignKeyActionType):
+        # delete还是update
+        self.is_delete:bool = is_delete
+        self.action_type = action_type
 
 class ForeignKeyClause(ColumnConstraint):
     def __init__(self,name:str,foreign_table:str,column_names:List[str],on_clauses:List[ForeignKeyOnClause],immediate:bool):
@@ -288,23 +303,29 @@ class ColumnDef:
         #decimal(10,5) 类型如果有范围需要记录
         self.type_name:TypeName = None
 
+class IndexedColumn:
+    def __init__(self,collation_name:str,is_asc:bool) -> None:
+        self.is_asc = None
+        self.collation_name = None
+        self.expr = None
+        self.column_name = None
 class PrimaryTableConstraint(TableConstraint):
-    def __init__(self):
-        super().__init__()
-        self.indexed_columns:List[ColumnDef] = None
+    def __init__(self,name:str,indexed_columns:List[IndexedColumn]):
+        super().__init__(name)
+        self.indexed_columns:List[IndexedColumn] = indexed_columns
 class UniqueTableConstraint(TableConstraint):
-    def __init__(self):
-        super().__init__()
-        self.indexed_columns:List[ColumnDef] = None
+    def __init__(self,name:str,indexed_columns:List[IndexedColumn]):
+        super().__init__(name)
+        self.indexed_columns:List[IndexedColumn] = indexed_columns
 class CheckTableConstraint(TableConstraint):
-    def __init__(self):
-        super().__init__()
+    def __init__(self,name:str,expr:Expr):
+        super().__init__(name)
         self.expr:Expr = None
 class ForeignKeyOnTableConstraint(TableConstraint):
-    def __init__(self):
-        super().__init__()
-        self.column_names:List[str] = None
-        self.foreign_clause:ForeignKeyClause = None
+    def __init__(self,name:str,column_names:List[str],foreign_clause:ForeignKeyClause):
+        super().__init__(name)
+        self.column_names:List[str] = column_names
+        self.foreign_clause:ForeignKeyClause = foreign_clause
 
 
 class AlterTable(Stmt):
@@ -367,41 +388,47 @@ class CommitStmt(Stmt):
     pass
 
 
-class IndexedColumn:
-    def __init__(self) -> None:
-        self.asc_desc = None
-        self.collation_name = None
-        self.expr = None
-        self.column_name = None
+class ColumnIndexedColumn(IndexedColumn):
+    def __init__(self,column_name:str,collation_name:str,is_asc:bool) -> None:
+        super().__init__(collation_name,is_asc)
+        self.column_name:str = column_name
 
+class ExprIndexedColumn(IndexedColumn):
+    def __init__(self,expr:Expr,collation_name:str,is_asc:bool) -> None:
+        super().__init__(collation_name,is_asc)
+        self.expr:Expr = expr
 
 class CreateIndexStmt(Stmt):
-    def __init__(self):
+    def __init__(self,unique:bool,if_not_exist:bool,schema_name:str,index_name:str,table_name:str,columns:List[ColumnIndexedColumn],where:Expr):
         super().__init__()
-        self.where:Expr = None
-        self.indexed_columns:List[IndexedColumn] = None
-        self.table_name = None
-        self.index_name = None
-        self.schema_name = None
-        self.if_not_exist:bool = None
-        self.unique:bool = None
-
-
+        self.unique:bool = unique
+        self.if_not_exist:bool = if_not_exist
+        self.schema_name = schema_name
+        self.index_name = index_name
+        self.table_name = table_name
+        self.indexed_columns:List[IndexedColumn] = columns
+        self.where:Expr = where
 
 
 class CreateTableStmt(Stmt):
-    def __init__(self):
+    def __init__(self,temp:bool,if_not_exist:bool,schema_name:str,table_name:str):
         super().__init__()
-        self.select_stmt:SelectStmt = None
-        self.row_id:str = None
-        self.table_constraints:List[TableConstraint] = None
-        self.column_defs:List[ColumnDef] = None
-        self.table_name:str = None
-        self.schema_name:str = None
-        self.if_not_exist:bool = None
         #临时表
-        self.temp:bool = None
+        self.temp:bool = temp
+        self.table_name:str = table_name
+        self.schema_name:str = schema_name
+        self.if_not_exist:bool = if_not_exist
 
+class UsuallyCreateTableStmt(CreateTableStmt):
+    def __init__(self,temp:bool,if_not_exist:bool,schema_name:str,table_name:str,table_constraints:List[TableConstraint],column_defs:List[ColumnDef] ):
+        super().__init__(temp,if_not_exist,schema_name,table_name)
+        self.column_defs = column_defs
+        self.table_constraints = table_constraints
+
+class SelectCreateTableStmt(CreateTableStmt):
+    def __init__(self,temp:bool,if_not_exist:bool,schema_name:str,table_name:str,select_stmt:SelectStmt):
+        super().__init__(temp,if_not_exist,schema_name,table_name)
+        self.select_stmt = select_stmt
 class TriggerTimeEnum(Enum):
     """触发器作用的时机"""
     BEFORE =1
@@ -423,7 +450,7 @@ class CreateTriggerStmt(Stmt):
         self.trigger_time:TriggerTimeEnum = None
         self.trigger_type:TriggerStmtTypeEnum = None
         """如果是更新，触发的列的名称"""
-        self.update_column_names = None
+        self.update_column_names:List[str] = None
         self.table_name = None
         self.for_each_row:bool = None
         self.when:Expr = None
@@ -668,8 +695,9 @@ class Cast(Expr):
         self.type_name:TypeName = type_name
 class ExprWithCollate(Expr):
     def __init__(self,expr:Expr,collate:str):
-        self.expr:Expr = None
-        self.collate:str = None
+        self.expr:Expr = expr
+        self.collate:str = collate
+
 class TextMatchType(Enum):
     LIKE = 1
     GLOB = 2
@@ -726,10 +754,10 @@ class TableFuncNameInExpr(InExpr):
         self.table_func_name:str = table_func_name
         self.params:List[Expr] = params
 class CaseThenExpr(Expr):
-    def __init__(self):
-        self.case:Expr = None
-        self.when:List[Expr] = None
-        self.else_expr:Expr = None
+    def __init__(self,case:Expr,when_then:List[(Expr,Expr)],else_expr:Expr):
+        self.case:Expr = case
+        self.when_then:List[(Expr,Expr)] = when_then
+        self.else_expr:Expr = else_expr
 class SelectExpr(Expr):
     def __init__(self,negative:bool,select_stmt:SelectStmt):
         self.negative:bool = negative
