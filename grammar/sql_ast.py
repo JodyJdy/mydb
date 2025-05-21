@@ -207,44 +207,44 @@ class DeleteStmt(Stmt):
         self.with_clause:WithClause = None
 
 class ColumnConstraint:
-    def __init__(self):
-        self.name:str = None
+    def __init__(self,name:str):
+        self.name:str = name
 class TableConstraint:
     def __init__(self):
         self.name:str = None
     pass
 class PrimaryKeyConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.asc_desc:bool = None
-        self.conflict_clause:ConflictClause = None
-        self.autoincrement:bool = None
+    def __init__(self,name:str,isAsc:bool,conflict_clause:ConflictClause,autoincrement:bool):
+        super().__init__(name)
+        self.isAsc:bool = isAsc
+        self.conflict_clause:ConflictClause = conflict_clause
+        self.autoincrement:bool = autoincrement
 class NullConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.negative:bool=None
+    def __init__(self,name:str,negative:bool):
+        super().__init__(name)
+        self.negative:bool=negative
 class UniqueConstraint(ColumnConstraint):
-    def __init__(self):
-        pass
+    def __init__(self,name:str):
+        super().__init__(name)
 class CheckConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.expr:Expr = None
+    def __init__(self,name:str,expr:Expr):
+        super().__init__(name)
+        self.expr:Expr = expr
 class DefaultConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.expr:Expr = None
+    def __init__(self,name:str,expr:Expr):
+        super().__init__(name)
+        self.expr:Expr = expr
 class CollateConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.collation_name:str = None
+    def __init__(self,name:str,collation_name:str):
+        super().__init__(name)
+        self.collation_name:str = collation_name
 class AsConstraint(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
-        self.generated_always:bool = None
-        self.expr:Expr = None
+    def __init__(self,name:str,generated_always:bool,expr:Expr,stored:bool):
+        super().__init__(name)
+        self.generated_always:bool = generated_always
+        self.expr:Expr = expr
         # stored or virtual
-        self.stored:bool = None
+        self.stored:bool = stored
 
 class ForeignKeyOnClause(Enum):
     DELETE_SET_NULL = 1
@@ -259,8 +259,8 @@ class ForeignKeyOnClause(Enum):
     UPDATE_NO_ACTION =10
 
 class ForeignKeyClause(ColumnConstraint):
-    def __init__(self):
-        super().__init__()
+    def __init__(self,name:str,foreign_table:str,column_names:List[str],on_clauses:List[ForeignKeyOnClause],immediate:bool):
+        super().__init__(name)
         self.on_clauses:List[ForeignKeyOnClause] = None
         """
         DEFERRABLE INITIALLY DEFERRED -- A deferred foreign key constraint
@@ -282,10 +282,9 @@ class TypeName:
         self.type_name_r:float = type_name_r
 
 class ColumnDef:
-    def __init__(self):
+    def __init__(self,column_name:str,type_name:TypeName,column_constraint:List[ColumnConstraint]):
         self.column_name = None
-        self.column_constraint = None
-        self.column_def:List[ColumnDef] = None
+        self.column_constraint:List[ColumnConstraint] = None
         #decimal(10,5) 类型如果有范围需要记录
         self.type_name:TypeName = None
 
@@ -309,30 +308,30 @@ class ForeignKeyOnTableConstraint(TableConstraint):
 
 
 class AlterTable(Stmt):
-    def __init__(self):
+    def __init__(self,schema_name:str,table_name:str):
         super().__init__()
-        self.schema_name:str = None
-        self.table_name:str = None
+        self.schema_name:str = schema_name
+        self.table_name:str = table_name
 class AlterTableRenameTable(AlterTable):
-    def __init__(self) -> None:
-        super().__init__()
-        self.new_table_name:str = None
+    def __init__(self,schema_name:str,table_name:str,new_table_name:str) -> None:
+        super().__init__(schema_name,table_name)
+        self.new_table_name:str = new_table_name
 class AlterTableRenameColumn(AlterTable):
-    def __init__(self):
-        super().__init__()
-        self.old_column_name:str = None
-        self.new_column_name:str = None
+    def __init__(self,schema_name:str,table_name:str,old_column_name:str,new_column_name:str) -> None:
+        super().__init__(schema_name,table_name)
+        self.old_column_name:str = old_column_name
+        self.new_column_name:str = new_column_name
 class AlterTableAddColumn(AlterTable):
-    def __init__(self):
-        super().__init__()
-        self.column_def:ColumnDef = None
+    def __init__(self,schema_name:str,table_name:str,column_def:ColumnDef) -> None:
+        super().__init__(schema_name,table_name)
+        self.column_def:ColumnDef = column_def
 class AlterTableDropColumn(AlterTable):
-    def __init__(self):
-        super().__init__()
-        self.column_name:str = None
+    def __init__(self,schema_name:str,table_name:str,column_name:str) -> None:
+        super().__init__(schema_name,table_name)
+        self.column_name:str = column_name
 
 class AnalyzeStmt(Stmt):
-    def __init__(self):
+    def __init__(self,schema_name:str,table_or_index_name:str):
         super().__init__()
         self.schema_name = None
         self.table_or_index_name = None
@@ -345,7 +344,7 @@ class AnalyzeStmt(Stmt):
 
 
 class AttachStmt(Stmt):
-    def __init__(self):
+    def __init__(self,data_base:bool,expr:Expr,schema_name:str):
         super().__init__()
         self.expr = None
         self.schema_name = None
@@ -359,10 +358,10 @@ class TransactionBeginType(Enum):
 
 
 class BeginStmt(Stmt):
-    def __init__(self):
+    def __init__(self,begin_type:TransactionBeginType,transaction_name:str):
         super().__init__()
-        self.begin_type:TransactionBeginType = None
-        self.transaction_name = None
+        self.begin_type:TransactionBeginType = begin_type
+        self.transaction_name = transaction_name
 
 class CommitStmt(Stmt):
     pass
