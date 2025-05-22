@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import List
+from typing import List, Tuple
+
 
 class ConflictClause(Enum):
     ROLLBACK = 1
@@ -129,8 +130,6 @@ class NormalSelectCore(SelectCore):
         self.where:Expr = None
         self.group_by:List[Expr] = None
         self.having:Expr = None
-        # 不考虑窗口函数
-        # self.window_funcs:List[WindowFunc] = None
 
 class ValuesClauseSelectCore(SelectCore):
     def __init__(self):
@@ -151,12 +150,14 @@ class ExceptSelectCore(SelectCore):
         self.left:SelectCore = None
         self.right:SelectCore = None
 
-class UpdateFailEnum(Enum):
-    ROLLBACK = 1
-    ABORT = 2
-    REPLACE = 3
-    FAIL = 4
-    IGNORE = 5
+class InsertTypeEnum(Enum):
+    INSERT = 1
+    REPLACE = 2
+    INSERT_OR_REPLACE = 3
+    INSERT_OR_ROLLBACK = 4
+    INSERT_OR_ABORT = 5
+    INSERT_OR_FAIL = 6
+    INSERT_OR_IGNORE = 7
 
 class UpdateSet:
     def __init__(self):
@@ -169,7 +170,7 @@ class UpdateStmt(Stmt):
         super().__init__()
         self.with_clause:WithClause = None
         self.qualified_name:QualifiedTableName = None
-        self.update_fail:UpdateFailEnum = None
+        self.update_fail:InsertTypeEnum = None
         self.update_set:List[UpdateSet] = None
         self.from_ : QueryTable = None
         self.where:Expr = None
@@ -183,24 +184,20 @@ class UpsertClause:
     pass
 class InsertStmt(Stmt):
     def __init__(self):
-        # insert or replace
-        self.insert:bool = None
-        self.update_fail:UpdateFailEnum = None
+        self.insert_type:InsertTypeEnum = None
         self.schema_name:str = None
         self.table_name:str = None
         self.table_alias:str = None
         self.column_names:List[str] = None
         self.values_clause:List[List[Expr]] = None
         self.select_stmt:SelectStmt = None
-        #不考虑冲突
-        # self.upsertClause:UpsertClause = None
         self.return_clauses:List[ReturningClause] = None
 
 class DeleteStmt(Stmt):
     def __init__(self):
         super().__init__()
         self.limit:Limit = None
-        self.order_by:OrderBy = None
+        self.order_by:List[OrderingTerm] = None
         self.returning_clauses:List[ReturningClause] = None
         self.expr:Expr = None
         self.qualified_table_name:QualifiedTableName = None
@@ -444,7 +441,7 @@ class CreateTriggerStmt(Stmt):
     def __init__(self):
         super().__init__()
         self.temp:bool= None
-        self.not_exist:bool = None
+        self.if_not_exist:bool = None
         self.schema_name:str = None
         self.trigger_name:str = None
         self.trigger_time:TriggerTimeEnum = None
@@ -454,7 +451,7 @@ class CreateTriggerStmt(Stmt):
         self.table_name = None
         self.for_each_row:bool = None
         self.when:Expr = None
-        self.stmt_list:List[SelectStmt|UpdateStmt|DeleteStmt|InsertStmt] = None
+        self.stmt_list:List[Stmt] = None
 
 
 class CreateViewStmt(Stmt):
@@ -483,7 +480,7 @@ class ExpressionModuleArgument(ModuleArgument):
 class VirtualTableStmt(Stmt):
     def __init__(self):
         super().__init__()
-        self.not_exist:bool = None
+        self.if_not_exist:bool = None
         self.schema_name:str = None
         self.table_name:str = None
         self.module_name:str = None
@@ -507,7 +504,7 @@ class QualifiedTableName:
 class ReturningClause:
     def __init__(self):
         self.column_alias = None
-        self.expr:str = None
+        self.expr:Expr = None
         self.table_name:str = None
         self.star:bool = None
 
@@ -516,7 +513,7 @@ class OrderingTerm:
     def __init__(self):
         self.expr = None
         self.collation_name = None
-        self.asc_desc:bool = None
+        self.is_asc:bool = None
         self.null_first:bool = None
 
 class OrderBy(Stmt):
@@ -526,9 +523,9 @@ class OrderBy(Stmt):
 
 
 class WithClauseContent:
-    def __init__(self):
-        self.select_stmt:SelectStmt = None
-        self.cte_table_name:CteTableName = None
+    def __init__(self,cte_table_name:CteTableName,select_stmt:SelectStmt):
+        self.select_stmt:SelectStmt = select_stmt
+        self.cte_table_name:CteTableName = cte_table_name
 
 
 class WithClause:
@@ -540,7 +537,8 @@ class WithClause:
 class Limit(Stmt):
     def __init__(self):
         super().__init__()
-        self.limit = None
+        self.limit:Expr = None
+        self.offset:Expr = None
 
 
 
@@ -600,7 +598,6 @@ class ReleaseStmt(Stmt):
     def __init__(self):
         super().__init__()
         self.save_point_name:str = None
-        self.save_point:bool = None
 
 
 
@@ -754,7 +751,7 @@ class TableFuncNameInExpr(InExpr):
         self.table_func_name:str = table_func_name
         self.params:List[Expr] = params
 class CaseThenExpr(Expr):
-    def __init__(self,case:Expr,when_then:List[(Expr,Expr)],else_expr:Expr):
+    def __init__(self,case:Expr,when_then:List[Tuple[Expr,Expr]],else_expr:Expr):
         self.case:Expr = case
         self.when_then:List[(Expr,Expr)] = when_then
         self.else_expr:Expr = else_expr
@@ -765,4 +762,3 @@ class SelectExpr(Expr):
 #暂时不考虑
 class Raise:
     pass
-

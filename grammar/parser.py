@@ -6,6 +6,7 @@ from SQLiteParser import *
 from grammar.sql_ast import *
 
 
+
 def parse_expr(context: SQLiteParser.ExprContext) -> Expr|None:
     if not context:
         return None
@@ -188,6 +189,14 @@ def get_type_name(type_name_context: SQLiteParser.Type_nameContext) -> TypeName:
     type_name = TypeName(name, num_a, num_b)
     return type_name
 
+def get_children_text(context:ParserRuleContext,list:List[str])->List[str]:
+    children = context.children
+    result:List[str] = []
+    for c in children:
+        t = get_text(c)
+        if t in list:
+            result.append(t)
+    return result
 
 def get_text(terminal: TerminalNodeImpl) -> str:
     if not terminal:
@@ -457,6 +466,213 @@ def parse_create_table_stmt(context:SQLiteParser.Create_table_stmtContext):
     table_constraints = [parse_table_constraint(c) for c in context.table_constraint()]
     return UsuallyCreateTableStmt(temp,if_not_exist,schema_name,table_name,table_constraints,column_defs)
 
+def get_children_by_type(context:ParserRuleContext,types : Tuple)->List[any]:
+    children = context.children
+    result = []
+    for c in children:
+        if isinstance(c,types):
+            result.append(c)
+    return result
+
 
 def parse_create_trigger_stmt(context:SQLiteParser.Create_trigger_stmtContext):
+    trigger_stmt = CreateTriggerStmt()
+    trigger_stmt.temp = context.TEMP_() or context.TEMPORARY_()
+    trigger_stmt.if_not_exist = context.NOT_()
+    trigger_stmt.schema_name = process_context_with_any_name(context.schema_name())
+    trigger_stmt.trigger_name = process_context_with_any_name(context.trigger_name())
+    trigger_time:TriggerTimeEnum = None
+    if context.BEFORE_():
+        trigger_time = TriggerTimeEnum.BEFORE
+    elif context.AFTER_():
+        trigger_time = TriggerTimeEnum.AFTER
+    elif context.INSTEAD_():
+        trigger_time = TriggerTimeEnum.INSTEAD_OF
+    trigger_type :TriggerStmtTypeEnum = None
+    if context.DELETE_():
+        trigger_type = TriggerStmtTypeEnum.DELETE
+    elif context.INSERT_():
+        trigger_type = TriggerStmtTypeEnum.INSERT
+    elif context.UPDATE_():
+        trigger_type = TriggerStmtTypeEnum.UPDATE
+        trigger_stmt.update_column_names = [process_context_with_any_name(c)for c in context.column_name()]
+    trigger_stmt.trigger_type = trigger_type
+    trigger_stmt.trigger_time = trigger_time
+    trigger_stmt.table_name = process_context_with_any_name(context.table_name())
+    if context.FOR_():
+        trigger_stmt.for_each_row = True
+    if context.WHEN_():
+        trigger_stmt.when = parse_expr(context.expr())
+        context.update_stmt()
+    parser = context.parser
+    crud_context = get_children_by_type(context,( parser.Select_stmtContext,parser.Insert_stmtContext,parser.Delete_stmtContext,parser.Update_stmtContext))
+    trigger_stmt.stmt_list =  [parse_stmt(c)for c in crud_context]
+    return trigger_stmt
+def parse_create_view_stmt(context:SQLiteParser.Create_view_stmtContext):
+    view_stmt = CreateViewStmt()
+    view_stmt.temp = context.TEMP_() or context.TEMPORARY_()
+    view_stmt.if_not_exist = context.IF_() is not None
+    view_stmt.schema_name = process_context_with_any_name(context.schema_name())
+    view_stmt.column_names = [process_context_with_any_name(c) for c in context.column_name()]
+    view_stmt.select_stmt = parse_select_stmt(context.select_stmt())
+    return view_stmt
+def parse_create_virtual_table_stmt(context:SQLiteParser.Create_virtual_table_stmtContext):
+    raise Exception('Not implemented')
+def cte_table_name(context:SQLiteParser.Cte_table_nameContext)->CteTableName:
+    cte = CteTableName()
+    cte.table_name  = process_context_with_any_name(context.table_name())
+    cte.column_names = [process_context_with_any_name(c) for c in context.column_name()]
+    return cte
+
+def with_clause(context:SQLiteParser.With_clauseContext)->WithClause|None:
+    if not context:
+        return None
+    with_ = WithClause()
+    with_.recursive = context.RECURSIVE_() is not None
+    cte_list =  [cte_table_name(c) for c in context.cte_table_name()]
+    select_list = [parse_select_stmt(c) for c in context.select_stmt()]
+    with_.clauses = []
+    for c,s in zip(cte_list,select_list):
+        with_.clauses.append(WithClauseContent(c,s))
+    return with_
+def qualified_table_name(context:SQLiteParser.Qualified_table_nameContext):
+    qualified = QualifiedTableName()
+    qualified.schema_name = process_context_with_any_name(context.schema_name())
+    qualified.table_name = process_context_with_any_name(context.table_name())
+    qualified.alias_name = process_context_with_any_name(context.alias())
+    qualified.index_name = process_context_with_any_name(context.index_name())
+    return qualified
+def result_column(column: SQLiteParser.Result_columnContext):
+    r = ReturningClause()
+    if column.STAR():
+        r.star = True
+    if column.table_name():
+        r.table_name = process_context_with_any_name(column.table_name())
+    if column.expr():
+        r.expr = parse_expr(column.expr())
+        alias: SQLiteParser.Column_aliasContext = column.column_alias()
+        if alias:
+            if alias.IDENTIFIER():
+                r.column_alias = get_text(alias.IDENTIFIER())
+            else:
+                r.column_alias = get_text(alias.STRING_LITERAL())
+    return r
+
+def returning_clause(context:SQLiteParser.Returning_clauseContext):
+    return [result_column(c)for c in context.result_column()]
+def parse_delete_stmt(context:SQLiteParser.Delete_stmtContext|SQLiteParser.Delete_stmt_limitedContext):
+    delete_stmt = DeleteStmt()
+    delete_stmt.with_clause = with_clause(context.with_clause())
+    delete_stmt.qualified_table_name = qualified_table_name(context.qualified_table_name())
+    delete_stmt.expr = parse_expr(context.expr())
+    delete_stmt.returning_clauses =returning_clause(context.returning_clause())
+    return delete_stmt
+
+def order_by_item(context:SQLiteParser.Ordering_termContext):
+    item = OrderingTerm()
+    item.expr =parse_expr(context.expr())
+    item.is_asc =parse_asc_desc(context.asc_desc())
+    item.collation_name = process_context_with_any_name(context.collation_name())
+    if context.FIRST_():
+        item.null_first = True
+    if context.LAST_():
+        item.null_first = False
+    return item
+def order_by(context:SQLiteParser.Order_by_stmtContext):
+    return [order_by_item(o)for o in context.ordering_term()]
+def limit(context:SQLiteParser.Limit_stmtContext):
+    l = Limit()
+    l.limit = parse_expr(context.expr(0))
+    if context.expr(1):
+        l.offset = parse_expr(context.expr(1))
+    return l
+
+def parse_delete_stmt_limited(context:SQLiteParser.Delete_stmt_limitedContext):
+    delete_stmt = parse_delete_stmt(context)
+    delete_stmt.limit = limit(context.limit_stmt())
+    delete_stmt.order_by = order_by(context.order_by_stmt())
+    return delete_stmt
+def parse_detach_stmt(context:SQLiteParser.Detach_stmtContext):
+    detach = DetachStmt()
+    detach.database = context.DATABASE_() is not None
+    detach.schema_name = process_context_with_any_name(context.schema_name())
+    return detach
+def parse_drop_stmt(context:SQLiteParser.Drop_stmtContext):
+    drop = DropStmt()
+    if context.INDEX_():
+        object_type = ObjectTypeEnum.INDEX
+    elif context.TABLE_():
+        object_type = ObjectTypeEnum.TABLE
+    elif context.TRIGGER_():
+        object_type = ObjectTypeEnum.TRIGGER
+    else:
+        object_type = ObjectTypeEnum.VIEW
+    drop.object_type = object_type
+    if context.IF_():
+        drop.if_exist = True
+    drop.schema_name = process_context_with_any_name(context.schema_name())
+    drop.name = process_any_name_context(context.any_name())
+    return drop
+
+def insert_type(context:SQLiteParser.Insert_stmtContext)->InsertTypeEnum:
+    if context.ROLLBACK_():
+        return InsertTypeEnum.INSERT_OR_ROLLBACK
+    elif context.ABORT_():
+        return InsertTypeEnum.INSERT_OR_ABORT
+    elif context.FAIL_():
+        return InsertTypeEnum.INSERT_OR_FAIL
+    elif context.IGNORE_():
+        return InsertTypeEnum.INSERT_OR_IGNORE
+    elif context.REPLACE_():
+        if not context.REPLACE_():
+            return InsertTypeEnum.REPLACE
+        return InsertTypeEnum.INSERT_OR_REPLACE
+    else:
+        return InsertTypeEnum.INSERT
+def value_clause(context:SQLiteParser.Values_clauseContext)->List[List[Expr]]:
+    return [[parse_expr(e) for e in row.expr()]for row in  context.value_row()]
+
+def parse_insert_stmt(context:SQLiteParser.Insert_stmtContext):
+    insert = InsertStmt()
+    insert.insert_type = insert_type(context)
+    insert.schema_name = process_context_with_any_name(context.schema_name())
+    insert.table_name = process_context_with_any_name(context.table_name())
+    insert.table_alias = process_context_with_any_name(context.table_alias())
+    if context.column_name():
+        insert.column_names =[process_context_with_any_name(c) for c in context.column_name()]
+    if context.values_clause():
+        insert.values_clause = value_clause(context.values_clause())
+    if context.select_stmt():
+        insert.select_stmt = parse_select_stmt(context.select_stmt())
+    return insert
+def parse_pragma_stmt(context:SQLiteParser.Pragma_stmtContext):
+    raise Exception('not implemented')
+def parse_reindex_stmt(context:SQLiteParser.Reindex_stmtContext):
+    reindex = ReindexStmt()
+    reindex.collation_name = process_context_with_any_name(context.collation_name())
+    reindex.schema_name = process_context_with_any_name(context.schema_name())
+    reindex.table_name = process_context_with_any_name(context.table_name())
+    return reindex
+def parse_release_stmt(context:SQLiteParser.Release_stmtContext):
+    release = ReleaseStmt()
+    release.save_point_name = process_context_with_any_name(context.savepoint_name())
+    return release
+
+def parse_rollback_stmt(context:SQLiteParser.Rollback_stmtContext):
+    rollback = RollbackStmt()
+    rollback.save_point_name = process_context_with_any_name(context.savepoint_name())
+    return rollback
+
+def parse_savepoint_stmt(context:SQLiteParser.Savepoint_stmtContext):
+    savepoint = SavePointStmt()
+    savepoint.save_point_name = process_context_with_any_name(context.savepoint_name())
+    return savepoint
+def parse_select_stmt(context:SQLiteParser.Select_stmtContext):
+    return SelectStmt()
+
+def parse_update_stmt(context:SQLiteParser.Update_stmtContext|SQLiteParser.Update_stmt_limitedContext):
     pass
+def parse_update_stmt_limited(context:SQLiteParser.Update_stmt_limitedContext):
+    pass
+def parse_vacuum_stmt(context:SQLiteParser.Vacuum_stmtContext):
+    raise Exception('not implemented')
