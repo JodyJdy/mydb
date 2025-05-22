@@ -10,8 +10,8 @@ def parse_expr(context: SQLiteParser.ExprContext) -> Expr | None:
         return None
     # 提前解析一些表达式
     first_expr_context: SQLiteParser.ExprContext = context.expr(0)
-    second_expr_context: SQLiteParser.ExprContext = context.expr(1) if first_expr_context else None
-    third_expr_context: SQLiteParser.ExprContext = context.expr(2) if second_expr_context else None
+    second_expr_context: SQLiteParser.ExprContext = context.expr(1)
+    third_expr_context: SQLiteParser.ExprContext = context.expr(2)
     first_expr = parse_expr(first_expr_context) if first_expr_context else None
     second_expr = parse_expr(second_expr_context) if second_expr_context else None
     third_expr = parse_expr(third_expr_context) if third_expr_context else None
@@ -69,7 +69,7 @@ def parse_expr(context: SQLiteParser.ExprContext) -> Expr | None:
     elif context.NOT_EQ2():
         return BinaryExpr(BinaryOperator.NOT_EQ2, first_expr, second_expr)
     elif context.IS_():
-        distinct = context.DISTINCT_() is not None
+        distinct =  context.DISTINCT_() is not None
         return IsExpr(not_, first_expr, second_expr, distinct)
     elif context.LIKE_():
         return TextMatchExpr(not_, TextMatchType.LIKE, first_expr, second_expr, third_expr)
