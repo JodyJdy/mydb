@@ -191,9 +191,9 @@ class UpsertClause:
 class InsertStmt(Stmt):
     def __init__(self):
         self.insert_type:InsertTypeEnum = None
-        self.schema_name:str = None
+        self.schema_name:str|None = None
         self.table_name:str = None
-        self.table_alias:str = None
+        self.table_alias:str|None = None
         self.column_names:List[str] = None
         self.values_clause:List[List[Expr]] = None
         self.select_stmt:SelectStmt = None
@@ -202,12 +202,12 @@ class InsertStmt(Stmt):
 class DeleteStmt(Stmt):
     def __init__(self):
         super().__init__()
-        self.limit:Limit = None
-        self.order_by:List[OrderingTerm] = None
+        self.limit:Limit|None = None
+        self.order_by:None|List[OrderingTerm] = None
         self.returning_clauses:List[ReturningClause] = None
-        self.expr:Expr = None
+        self.where: Expr | None = None
         self.qualified_table_name:QualifiedTableName = None
-        self.with_clause:WithClause = None
+        self.with_clause:WithClause|None = None
 
 class ColumnConstraint:
     def __init__(self,name:str):
@@ -277,9 +277,9 @@ class ForeignKeyOnClause:
         self.action_type = action_type
 
 class ForeignKeyClause(ColumnConstraint):
-    def __init__(self,name:str,foreign_table:str,column_names:List[str],on_clauses:List[ForeignKeyOnClause],immediate:bool):
+    def __init__(self,name:str|None,foreign_table:str,column_names:List[str],on_clauses:List[ForeignKeyOnClause],immediate:bool):
         super().__init__(name)
-        self.on_clauses:List[ForeignKeyOnClause] = None
+        self.on_clauses:List[ForeignKeyOnClause] = on_clauses
         """
         DEFERRABLE INITIALLY DEFERRED -- A deferred foreign key constraint
         NOT DEFERRABLE INITIALLY DEFERRED            -- An immediate foreign key constraint
@@ -288,9 +288,9 @@ class ForeignKeyClause(ColumnConstraint):
         DEFERRABLE INITIALLY IMMEDIATE               -- An immediate foreign key constraint
         DEFERRABLE                                   -- An immediate foreign key constraint
         """
-        self.immediate:bool = None
-        self.column_names:List[str] = None
-        self.foreign_table:str = None
+        self.immediate:bool = immediate
+        self.column_names:List[str] = column_names
+        self.foreign_table:str = foreign_table
 
 class TypeName:
     def __init__(self,name:str,type_name_l:float,type_name_r:float):
@@ -301,17 +301,15 @@ class TypeName:
 
 class ColumnDef:
     def __init__(self,column_name:str,type_name:TypeName,column_constraint:List[ColumnConstraint]):
-        self.column_name = None
-        self.column_constraint:List[ColumnConstraint] = None
+        self.column_name = column_name
+        self.column_constraint:List[ColumnConstraint] = column_constraint
         #decimal(10,5) 类型如果有范围需要记录
-        self.type_name:TypeName = None
+        self.type_name:TypeName = type_name
 
 class IndexedColumn:
     def __init__(self,collation_name:str,is_asc:bool) -> None:
-        self.is_asc = None
-        self.collation_name = None
-        self.expr = None
-        self.column_name = None
+        self.is_asc = is_asc
+        self.collation_name = collation_name
 class PrimaryTableConstraint(TableConstraint):
     def __init__(self,name:str,indexed_columns:List[IndexedColumn]):
         super().__init__(name)
@@ -323,7 +321,7 @@ class UniqueTableConstraint(TableConstraint):
 class CheckTableConstraint(TableConstraint):
     def __init__(self,name:str,expr:Expr):
         super().__init__(name)
-        self.expr:Expr = None
+        self.expr:Expr = expr
 class ForeignKeyOnTableConstraint(TableConstraint):
     def __init__(self,name:str,column_names:List[str],foreign_clause:ForeignKeyClause):
         super().__init__(name)
@@ -370,9 +368,9 @@ class AnalyzeStmt(Stmt):
 class AttachStmt(Stmt):
     def __init__(self,data_base:bool,expr:Expr,schema_name:str):
         super().__init__()
-        self.expr = None
-        self.schema_name = None
-        self.data_base:bool = None
+        self.expr = expr
+        self.schema_name = schema_name
+        self.data_base:bool = data_base
 
 class TransactionBeginType(Enum):
     DEFERRED = 1
@@ -522,11 +520,6 @@ class OrderingTerm:
         self.is_asc:bool = None
         self.null_first:bool = None
 
-class OrderBy(Stmt):
-    def __init__(self):
-        super().__init__()
-        self.order_items:List[OrderingTerm] = None
-
 
 class WithClauseContent:
     def __init__(self,cte_table_name:CteTableName,select_stmt:SelectStmt):
@@ -541,19 +534,18 @@ class WithClause:
 
 
 class Limit(Stmt):
-    def __init__(self):
+    def __init__(self,limit:Expr,offset:Expr):
         super().__init__()
-        self.limit:Expr = None
-        self.offset:Expr = None
-
+        self.limit:Expr = limit
+        self.offset:Expr = offset
 
 
 
 class DetachStmt(Stmt):
-    def __init__(self):
+    def __init__(self,schema_name:str,database:bool):
         super().__init__()
-        self.schema_name = None
-        self.database:bool = None
+        self.schema_name = schema_name
+        self.database:bool = database
 
 class ObjectTypeEnum(Enum):
     INDEX = 1
@@ -570,13 +562,10 @@ class DropStmt(Stmt):
         self.if_exist:bool = None
 
 
-
 class PragmaValueType(Enum):
     NAME = 1
     STRING_LITERAL = 2
     NUMBER = 3
-
-
 
 class PragmaValue:
     def __init__(self):
@@ -601,22 +590,21 @@ class ReindexStmt(Stmt):
 
 
 class ReleaseStmt(Stmt):
-    def __init__(self):
+    def __init__(self,save_point_name:str|None):
         super().__init__()
-        self.save_point_name:str = None
+        self.save_point_name:str|None = save_point_name
 
 
 
 class RollbackStmt(Stmt):
-    def __init__(self):
+    def __init__(self,save_point_name:str|None):
         super().__init__()
-        self.save_point_name:str = None
-
+        self.save_point_name:str|None = save_point_name
 
 class SavePointStmt(Stmt):
-    def __init__(self):
+    def __init__(self,save_point_name:str):
         super().__init__()
-        self.save_point_name = None
+        self.save_point_name = save_point_name
 
 
 class VacuumStmt(Stmt):
