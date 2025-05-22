@@ -62,29 +62,29 @@ class SelectStmt(Stmt):
         self.recursive:bool = None
         self.common_table_list:List[CommonTable] = []
         self.select_core:SelectCore = None
-        self.order_by:OrderBy = None
+        self.order_by:List[OrderingTerm] = None
         self.limit:Limit = None
 
 class QueryTable:
     pass
 class SimpleQueryTable(QueryTable):
-    def __init__(self):
-        self.schema_name:str = None
-        self.table_name:str = None
-        self.table_alias:str = None
+    def __init__(self,schema_name:str,table_name:str,table_alias:str,index_name:str):
+        self.schema_name:str = schema_name
+        self.table_name:str = table_name
+        self.table_alias:str = table_alias
         """指定查询时用的索引"""
-        self.indexed_by:str = None
+        self.indexed_by:str = index_name
 class TableFuncQueryTable(QueryTable):
-    def __init__(self):
+    def __init__(self,schema_name:str,table_func_name:str,params:List[Expr],table_alias:str):
         """返回一个table的函数"""
-        self.schema_name:str = None
-        self.table_func_name:str = None
-        self.exprs:List[Expr] = []
-        self.table_alias:str = None
+        self.schema_name:str = schema_name
+        self.table_func_name:str = table_func_name
+        self.params:List[Expr] = params
+        self.table_alias:str = table_alias
 class SelectStmtQueryTable(QueryTable):
-    def __init__(self):
-        self.select_stmt:SelectStmt = None
-        self.table_alias:str = None
+    def __init__(self,select_stmt:SelectStmt,table_alias:str):
+        self.select_stmt:SelectStmt = select_stmt
+        self.table_alias:str = table_alias
 
 class JoinTypeEnum(Enum):
     #笛卡尔
@@ -100,20 +100,20 @@ class JoinConstraint:
     pass
 class UsingJoinConstraint(JoinConstraint):
     """使用同名字段连接"""
-    def __init__(self):
-        self.column_name:List[str] = None
+    def __init__(self,column_name:List[str]):
+        self.column_name:List[str] = column_name
 class OnJoinConstraint(JoinConstraint):
     """使用 on 连接"""
-    def __init__(self):
-        self.expr:Expr = None
+    def __init__(self,expr:Expr):
+        self.expr:Expr = expr
 class JoinQueryTable(QueryTable):
     """连表"""
-    def __init__(self):
-        self.left:QueryTable = None
-        self.right:QueryTable = None
-        self.natural:bool = None
-        self.join_type:JoinTypeEnum = None
-        self.join_constraint:JoinConstraint = None
+    def __init__(self,left:QueryTable,right:QueryTable,natural=None,join_type=None,join_constraint = None):
+        self.left:QueryTable = left
+        self.right:QueryTable = right
+        self.natural:bool = natural
+        self.join_type:JoinTypeEnum = join_type
+        self.join_constraint:JoinConstraint = join_constraint
 
 
 class SelectCore:
@@ -124,7 +124,7 @@ class WindowFunc:
 
 class NormalSelectCore(SelectCore):
     def __init__(self):
-        self.distinct_or_all:bool=None
+        self.distinct:bool=None
         self.result_columns:List[ReturningClause] = None
         self.query_table:QueryTable = None
         self.where:Expr = None
@@ -132,15 +132,15 @@ class NormalSelectCore(SelectCore):
         self.having:Expr = None
 
 class ValuesClauseSelectCore(SelectCore):
-    def __init__(self):
-        self.rows:List[List[Expr]] = None
+    def __init__(self,rows:List[List[Expr]]):
+        self.rows:List[List[Expr]] = rows
 
 
 class UnionSelectCore(SelectCore):
-    def __init__(self):
-        self.all:bool = None
-        self.left:SelectCore = None
-        self.right:SelectCore = None
+    def __init__(self,all_:bool,left:SelectCore,right:SelectCore):
+        self.all_:bool = all_
+        self.left:SelectCore = left
+        self.right:SelectCore = right
 class IntersectSelectCore(SelectCore):
     def __init__(self):
         self.left:SelectCore = None
@@ -159,27 +159,33 @@ class InsertTypeEnum(Enum):
     INSERT_OR_FAIL = 6
     INSERT_OR_IGNORE = 7
 
+class UpdateTypeEnum(Enum):
+    UPDATE = 1
+    UPDATE_OR_ROLLBACK = 2
+    UPDATE_OR_ABORT = 3
+    UPDATE_OR_REPLACE = 4
+    UPDATE_OR_FAIL = 5
+    UPDATE_OR_IGNORE = 6
+
 class UpdateSet:
-    def __init__(self):
-        self.column_name:str = None
-        self.columns:List[str] = None
-        self.exprs:Expr = None
+    def __init__(self,expr:Expr,column_name:str=None,columns:List[str]=None):
+        self.column_name:str = column_name
+        self.columns:List[str] = columns
+        self.expr:Expr = expr
 
 class UpdateStmt(Stmt):
     def __init__(self):
         super().__init__()
         self.with_clause:WithClause = None
         self.qualified_name:QualifiedTableName = None
-        self.update_fail:InsertTypeEnum = None
+        self.update_type:UpdateTypeEnum = None
         self.update_set:List[UpdateSet] = None
         self.from_ : QueryTable = None
         self.where:Expr = None
         self.return_clauses:List[ReturningClause] = None
-        self.order_by:OrderBy = None
+        self.order_by:List[OrderingTerm] = None
         self.limit:Limit = None
 
-class UpdateStmtLimit(UpdateStmt):
-    pass
 class UpsertClause:
     pass
 class InsertStmt(Stmt):

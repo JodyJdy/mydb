@@ -10,4 +10,5 @@
 * vacuum
 * window_func, filter_clause over_clause
 * common_table_stmt
+* INTERSECT_ EXCEPT_
 

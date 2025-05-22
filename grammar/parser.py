@@ -282,9 +282,34 @@ def do_parse_stmt(stmt_context: SQLiteParser.Sql_stmtContext) -> Stmt:
     elif stmt_context.create_table_stmt():
         return parse_create_table_stmt(stmt_context.create_table_stmt())
     elif stmt_context.create_trigger_stmt():
-        pass
-
-    return None
+        return parse_create_trigger_stmt(stmt_context.create_trigger_stmt())
+    elif stmt_context.create_view_stmt():
+        return parse_create_view_stmt(stmt_context.create_view_stmt())
+    elif stmt_context.delete_stmt():
+        return parse_delete_stmt(stmt_context.delete_stmt())
+    elif stmt_context.delete_stmt_limited():
+        return parse_delete_stmt_limited(stmt_context.delete_stmt())
+    elif stmt_context.detach_stmt():
+        return parse_detach_stmt(stmt_context.detach_stmt())
+    elif stmt_context.drop_stmt():
+        return parse_delete_stmt(stmt_context.drop_stmt())
+    elif stmt_context.insert_stmt():
+        return parse_insert_stmt(stmt_context.insert_stmt())
+    elif stmt_context.reindex_stmt():
+        return parse_reindex_stmt(stmt_context.reindex_stmt())
+    elif stmt_context.release_stmt():
+        return parse_release_stmt(stmt_context.release_stmt())
+    elif stmt_context.rollback_stmt():
+        return parse_release_stmt(stmt_context.rollback_stmt())
+    elif stmt_context.savepoint_stmt():
+        return parse_savepoint_stmt(stmt_context.savepoint_stmt())
+    elif stmt_context.select_stmt():
+        return parse_select_stmt(stmt_context.select_stmt())
+    elif stmt_context.update_stmt():
+        return parse_update_stmt(stmt_context.update_stmt())
+    elif stmt_context.update_stmt_limited():
+        return parse_update_stmt_limited(stmt_context.update_stmt_limited())
+    raise Exception('not implemented')
 
 
 def parse_asc_desc(asc_desc: SQLiteParser.Asc_descContext):
@@ -579,8 +604,12 @@ def order_by_item(context:SQLiteParser.Ordering_termContext):
         item.null_first = False
     return item
 def order_by(context:SQLiteParser.Order_by_stmtContext):
+    if not context:
+        return None
     return [order_by_item(o)for o in context.ordering_term()]
 def limit(context:SQLiteParser.Limit_stmtContext):
+    if not context:
+        return None
     l = Limit()
     l.limit = parse_expr(context.expr(0))
     if context.expr(1):
@@ -667,12 +696,171 @@ def parse_savepoint_stmt(context:SQLiteParser.Savepoint_stmtContext):
     savepoint = SavePointStmt()
     savepoint.save_point_name = process_context_with_any_name(context.savepoint_name())
     return savepoint
-def parse_select_stmt(context:SQLiteParser.Select_stmtContext):
-    return SelectStmt()
 
+def table_or_subquery_list(context_list:List[SQLiteParser.Table_or_subqueryContext])->QueryTable:
+    # 多个表用逗号分开是 笛卡尔
+    query_table_list = [table_or_subquery(c) for c in context_list]
+    first = query_table_list[0]
+    for table in query_table_list[1:]:
+        first = JoinQueryTable(first, table,False,JoinTypeEnum.CARTESIAN)
+    return first
+def table_or_subquery(context:SQLiteParser.Table_or_subqueryContext)->QueryTable:
+    schema_name = process_context_with_any_name(context.schema_name())
+    table_alias = process_context_with_any_name(context.table_alias())
+    table_name = process_context_with_any_name(context.table_name())
+    if context.table_or_subquery():
+        #不只一个
+        if context.COMMA():
+            return table_or_subquery_list(context.table_or_subquery())
+        return table_or_subquery(context.table_or_subquery(0))
+    elif context.table_name():
+        return SimpleQueryTable(
+            schema_name,
+            process_context_with_any_name(context.table_name()),
+            table_alias,
+            table_name
+        )
+    elif  context.table_function_name():
+        params = [parse_expr(c )for c in context.expr()] if context.expr() else []
+        return TableFuncQueryTable(
+            schema_name,
+            process_context_with_any_name(context.table_function_name()),
+            params,
+            table_alias
+        )
+    elif context.select_stmt():
+        return SelectStmtQueryTable(
+            parse_select_stmt(context.select_stmt()),
+            table_alias
+        )
+    elif context.join_clause():
+        return join_clause(context.join_clause())
+    else:
+        raise Exception('not implemented')
+
+def join_operator(context:SQLiteParser.Join_operatorContext)->Tuple[JoinTypeEnum,bool]:
+    natural:bool = context.NATURAL_() is not None
+    if context.COMMA():
+        return JoinTypeEnum.CARTESIAN,natural
+    elif context.LEFT_():
+        return JoinTypeEnum.LEFT,natural
+    elif context.RIGHT_():
+        return JoinTypeEnum.RIGHT,natural
+    elif context.FULL_():
+        return JoinTypeEnum.FULL,natural
+    elif context.INNER_():
+        return JoinTypeEnum.INNER,natural
+    elif context.CROSS_():
+        return JoinTypeEnum.CROSS,natural
+    else:
+        raise Exception('not implemented')
+
+def join_constraint(context: SQLiteParser.Join_constraintContext)->JoinConstraint:
+    if context.expr():
+        return OnJoinConstraint(parse_expr(context.expr()))
+    return UsingJoinConstraint([process_context_with_any_name(c)for c in context.column_name()])
+
+def join_clause(context:SQLiteParser.Join_clauseContext)->JoinQueryTable:
+    result = table_or_subquery(context.table_or_subquery(0))
+    parser = context.parser
+    i = 1
+    while i < len(context.children):
+        operator,natural = join_operator(context.children[i])
+        second = table_or_subquery(context.children[ i + 1 ])
+        constraint = None
+        i+=2
+        if i < len(context.children) and isinstance(context.children[ i ], parser.Join_constraintContext):
+            constraint = join_constraint(context.children[ i ])
+            i=i+1
+        result = JoinQueryTable(result, second,natural, operator, constraint)
+    return result
+
+def parse_select_core(context:SQLiteParser.Select_coreContext)->SelectCore:
+    if context.values_clause():
+        return ValuesClauseSelectCore(value_clause(context.values_clause()))
+    select = NormalSelectCore()
+    if context.DISTINCT_():
+        select.distinct = True
+    select.result_columns = [result_column(c) for c in context.result_column()]
+    if context.join_clause():
+        select.query_table = join_clause(context.join_clause())
+    else:
+        select.query_table = table_or_subquery_list(context.table_or_subquery())
+    if context.whereExpr:
+        select.where = parse_expr(context.whereExpr())
+    if context.groupByExpr:
+        select.group_by = [ parse_expr(c)for c in context.groupByExpr]
+    if context.havingExpr:
+        select.having = parse_expr(context.havingExpr)
+    return select
+
+
+def parse_select_stmt(context:SQLiteParser.Select_stmtContext):
+    o = order_by(context.order_by_stmt())
+    l = limit(context.limit_stmt())
+    select_core:SelectCore = parse_select_core(context.select_core(0))
+    if context.compound_operator():
+        i=0
+        while i < len(context.compound_operator()):
+            operator:SQLiteParser.Compound_operatorContext = context.compound_operator()[i]
+            all_ = operator.ALL_() is not None
+            select_core = UnionSelectCore(all_,select_core,parse_select_core(context.select_core(i+1)))
+            i=i+1
+    select_stmt = SelectStmt()
+    select_stmt.select_core = select_core
+    select_stmt.limit = l
+    select_stmt.order_by = o
+    return select_stmt
+
+def update_type(context:SQLiteParser.Update_stmtContext|SQLiteParser.Update_stmt_limitedContext)->UpdateTypeEnum:
+    if context.ROLLBACK_():
+        return UpdateTypeEnum.UPDATE_OR_ROLLBACK
+    elif context.ABORT_():
+        return UpdateTypeEnum.UPDATE_OR_ABORT
+    elif context.REPLACE_():
+        return UpdateTypeEnum.UPDATE_OR_REPLACE
+    elif context.FAIL_():
+        return UpdateTypeEnum.UPDATE_OR_FAIL
+    elif context.IGNORE_():
+        return UpdateTypeEnum.UPDATE_OR_IGNORE
+    else:
+        return UpdateTypeEnum.UPDATE
 def parse_update_stmt(context:SQLiteParser.Update_stmtContext|SQLiteParser.Update_stmt_limitedContext):
-    pass
+    update_stmt = UpdateStmt()
+    update_stmt.update_type = update_type(context)
+    update_stmt.qualified_name = qualified_table_name(context.qualified_table_name())
+    parser = context.parser
+    column_name_type = parser.Column_nameContext
+    column_name_list_type = parser.Column_name_listContext
+    SQLiteParser.Column_name_listContext.column_name()
+    children = get_children_by_type(context,(column_name_type,column_name_list_type))
+    set_list:List[UpdateSet] = []
+    exprs = [parse_expr(c)for c in context.expr()]
+    for i in range(len(children)):
+        column_name_or_list = children[i]
+        expr = exprs[i]
+        if isinstance(column_name_or_list, column_name_type):
+            column_name = process_context_with_any_name(column_name_or_list)
+            set_list.append(UpdateSet(expr,column_name,None))
+        else:
+            column_name_list =  [ process_context_with_any_name(c)for c in column_name_or_list.column_name()]
+            set_list.append(UpdateSet(expr,None,column_name_list))
+    update_stmt.update_set = set_list
+    if context.FROM_():
+        if context.join_clause():
+            update_stmt.from_ = join_clause(context.join_clause())
+        else:
+            update_stmt.from_ = table_or_subquery_list(context.table_or_subquery())
+    if context.WHERE_():
+        update_stmt.where = exprs[-1]
+    if context.returning_clause():
+        update_stmt.return_clauses = returning_clause(context.returning_clause())
+    return update_stmt
+
 def parse_update_stmt_limited(context:SQLiteParser.Update_stmt_limitedContext):
-    pass
+    update_stmt = parse_update_stmt(context)
+    update_stmt.limit = limit(context.limit_stmt())
+    update_stmt.order_by = order_by(context.order_by_stmt())
+    return  update_stmt
 def parse_vacuum_stmt(context:SQLiteParser.Vacuum_stmtContext):
     raise Exception('not implemented')
