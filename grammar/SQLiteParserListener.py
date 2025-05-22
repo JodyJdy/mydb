@@ -3,7 +3,7 @@ from antlr4 import *
 if "." in __name__:
     from .SQLiteParser import SQLiteParser
 else:
-    from SQLiteParser import SQLiteParser
+    from grammar.SQLiteParser import SQLiteParser
 
 # This class defines a complete listener for a parse tree produced by SQLiteParser.
 class SQLiteParserListener(ParseTreeListener):

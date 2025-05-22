@@ -840,7 +840,7 @@ savepoint_name
 ;
 
 table_alias
-    : any_name
+    : alias_name
 ;
 
 transaction_name
@@ -852,7 +852,7 @@ window_name
 ;
 
 alias
-    : any_name
+    : alias_name
 ;
 
 filename
@@ -874,7 +874,11 @@ aggregate_func
 table_function_name
     : any_name
 ;
-
+alias_name
+    : IDENTIFIER
+    | STRING_LITERAL
+    | OPEN_PAR alias_name CLOSE_PAR
+;
 any_name
     : IDENTIFIER
     | keyword

@@ -1,7 +1,7 @@
 
 from antlr4.tree.Tree import TerminalNodeImpl
 
-from SQLiteParser import *
+from grammar.SQLiteParser import *
 
 from grammar.sql_ast import *
 
@@ -153,12 +153,23 @@ def parse_expr(context: SQLiteParser.ExprContext) -> Expr|None:
         return CaseThenExpr(case,when_then,else_expr)
     return None
 
+def process_context_with_alias_name(context):
+    if not context:
+        return None
+    return process_alias_name_context(context.alias_name())
 
 def process_context_with_any_name(context):
     if not context:
         return None
     return process_any_name_context(context.any_name())
 
+def process_alias_name_context(alias_name: SQLiteParser.Alias_nameContext):
+    if alias_name.IDENTIFIER():
+        return get_text(alias_name.IDENTIFIER())
+    if alias_name.STRING_LITERAL():
+        return get_text(alias_name.STRING_LITERAL())
+    if alias_name.alias_name():
+        return process_alias_name_context(alias_name.alias_name())
 
 def process_any_name_context(any_name: SQLiteParser.Any_nameContext):
     if any_name.IDENTIFIER():
@@ -564,7 +575,7 @@ def qualified_table_name(context:SQLiteParser.Qualified_table_nameContext):
     qualified = QualifiedTableName()
     qualified.schema_name = process_context_with_any_name(context.schema_name())
     qualified.table_name = process_context_with_any_name(context.table_name())
-    qualified.alias_name = process_context_with_any_name(context.alias())
+    qualified.alias_name = process_context_with_alias_name(context.alias())
     qualified.index_name = process_context_with_any_name(context.index_name())
     return qualified
 def result_column(column: SQLiteParser.Result_columnContext):
@@ -666,7 +677,7 @@ def parse_insert_stmt(context:SQLiteParser.Insert_stmtContext):
     insert.insert_type = insert_type(context)
     insert.schema_name = process_context_with_any_name(context.schema_name())
     insert.table_name = process_context_with_any_name(context.table_name())
-    insert.table_alias = process_context_with_any_name(context.table_alias())
+    insert.table_alias = process_context_with_alias_name(context.table_alias())
     if context.column_name():
         insert.column_names =[process_context_with_any_name(c) for c in context.column_name()]
     if context.values_clause():
@@ -706,7 +717,7 @@ def table_or_subquery_list(context_list:List[SQLiteParser.Table_or_subqueryConte
     return first
 def table_or_subquery(context:SQLiteParser.Table_or_subqueryContext)->QueryTable:
     schema_name = process_context_with_any_name(context.schema_name())
-    table_alias = process_context_with_any_name(context.table_alias())
+    table_alias = process_context_with_alias_name(context.table_alias())
     table_name = process_context_with_any_name(context.table_name())
     if context.table_or_subquery():
         #不只一个
