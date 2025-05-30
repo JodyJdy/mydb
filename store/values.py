@@ -1,3 +1,4 @@
+import struct
 from abc import abstractmethod
 
 from typing import List
@@ -11,27 +12,96 @@ class Value:
     @abstractmethod
     def space_use(self):
         pass
+
+    def is_null(self):
+        """
+        值是否为null
+        :return:
+        """
+        pass
     @abstractmethod
     def get_bytes(self)->bytearray:
         pass
+class ByteArray(Value):
+    def __init__(self,value:bytearray,is_null:bool=False):
+        self.value = value
+        self.is_null = is_null
+
+    def len_variable(self):
+        return True
+
+    def space_use(self):
+        return len(self.value)
+
+    def is_null(self):
+        return self.is_null
+
+    def get_bytes(self) -> bytearray:
+        return self.value
+    def __repr__(self):
+        return f"bytearray:{self.value}"
+
+class StrValue(Value):
+    def __init__(self,value:str,is_null:bool=False):
+        self.value = value
+        self.is_null = is_null
+        self.result = bytearray()
+        self.result.extend(self.value.encode('utf-8'))
+
+    def len_variable(self):
+        return True
+
+    def space_use(self):
+        return len(self.result)
+
+    def get_bytes(self) -> bytearray:
+        return self.result
+
+    def __repr__(self):
+        return f"str:{self.value}"
+
+
+class IntValue(Value):
+    def len_variable(self):
+        return False
+    def space_use(self):
+        return 4
+    def get_bytes(self) -> bytearray:
+        result = bytearray(4)
+        struct.pack_into('<i',result,0, self.value)
+        return result
+    def __init__(self,value:int,is_null:bool=False):
+        self.value = value
+        self.is_null = is_null
+
+    def __repr__(self):
+        return f"int:{self.value}"
 
 class Row:
-    def __init__(self,values:List[Value|bytearray]):
+    def __init__(self,values:List[Value]):
         self.values = values
         self.space_use = self._space_use()
-    def values(self)->List[Value|bytearray]:
+    def values(self)->List[Value]:
         pass
     def _space_use(self):
         use = 0
         for value in self.values:
-            if isinstance(value, bytearray):
-                use+=len(value)
-            else:
-                use += value.space_use()
+            use += value.space_use()
         return use
+    def __repr__(self):
+        return str(self.values)
 
-    @staticmethod
-    def single_value_row(v:Value|bytearray):
-        return Row([v])
+def over_flow_row(v: bytearray):
+    return Row([ByteArray(v)])
 
+def generate_row(v:List[int|str])->List[Value]:
+    values: List[Value] = []
+    for value in v:
+        if type(value) == int:
+            values.append(IntValue(value))
+        elif type(value) == str:
+            values.append(StrValue(value))
+    return values
+
+print(generate_row([1,2,3,4,"hello world"]))
 
