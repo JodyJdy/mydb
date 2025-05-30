@@ -259,7 +259,7 @@ class Container:
     def write_page(self, page_number: int, page_data: bytearray):
         offset = page_number * config.PAGE_SIZE
         self.seek_offset(offset)
-        if not self.get_size() == offset:
+        if  self.get_size() < offset:
             self.pad_file(offset)
         self.file.write(page_data)
 
@@ -297,11 +297,19 @@ class Container:
         self.file.close()
 
     def flush(self):
-        self.alloc.flush()
-        self.file.flush()
         for k, v in self.cache.items():
             if v.dirty:
                 self.write_page(k,v.page_data)
+        self.alloc.flush()
+        self.file.flush()
+
+class OverFlowRecordHeader:
+    def __init__(self, status:int, record_id:int, length:int, next_page_num:int, next_record_id:int):
+        self.status = status
+        self.record_id = record_id
+        self.length = length
+        self.next_page_num = next_page_num
+        self.next_record_id = next_record_id
 
 
 class OverFlowPage(BasePage):
@@ -369,18 +377,27 @@ class OverFlowPage(BasePage):
             space_used += record_len
         return config.PAGE_SIZE - space_used
 
+    def read_record_header_by_slot(self,slot:int)->Tuple[int,OverFlowRecordHeader]:
+        offset, _ = self.read_slot_entry(slot)
+        return offset,OverFlowRecordHeader(*struct.unpack_from('<biiii', self.page_data, offset))
+
+    def read_record_header_by_record_id(self,record_id:int)->Tuple[None,None,None]|Tuple[int,int,OverFlowRecordHeader]:
+        for i in range(self.slot_num):
+            offset,record_header = self.read_record_header_by_slot(i)
+            if record_header.record_id == record_id:
+                return offset,i,record_header
+        return None,None,None
+
     def read_by_record_id(self, record_id:int)-> bytearray | None:
         result = bytearray()
-        for i in range(self.slot_num):
-            offset, length = self.read_slot_entry(i)
-            status,temp_record_id,length,next_page_num,next_record_id = struct.unpack_from('<biiii', self.page_data, offset)
-            if temp_record_id == record_id:
-                data_offset = offset + OverFlowPage.record_header_size()
-                result.extend(self.page_data[data_offset:data_offset + length])
-                if status == OverFlowPage.MULTI_PAGE:
-                    next_page = self.container.get_page(next_page_num)
-                    result.extend(next_page.read_by_record_id(next_record_id))
-                break
+        offset,slot,record_header = self.read_record_header_by_record_id(record_id)
+        if not offset:
+            return result
+        data_offset = offset + OverFlowPage.record_header_size()
+        result.extend(self.page_data[data_offset:data_offset + record_header.length])
+        if record_header.status == OverFlowPage.MULTI_PAGE:
+            next_page = self.container.get_page(record_header.next_page_num)
+            result.extend(next_page.read_by_record_id(record_header.next_record_id))
         return result
 
 
@@ -477,7 +494,9 @@ class OverFlowPage(BasePage):
             if status == OverFlowPage.MULTI_PAGE:
                 next_page:OverFlowPage = cur_page.container.new_page()
                 #记录over flow信息
-                cur_page.adjust_record_over_flow(record_offset,next_page.page_num,next_page.get_next_record_id())
+                #由于要写入下一个页，赋值cur_record_id为下一页的record_id
+                cur_record_id =next_page.get_next_record_id()
+                cur_page.adjust_record_over_flow(record_offset,next_page.page_num,cur_record_id)
                 cur_page = next_page
                 slot = 0
         return result_record_id,cur_page.page_num
@@ -498,6 +517,24 @@ class OverFlowPage(BasePage):
         # 读取最新一条，slot
         offset, length = self.read_slot_entry(self.slot_num - 1)
         return offset + length
+
+    def delete_by_slot(self,slot:int):
+        _,record_header= self.read_record_header_by_slot(slot)
+        self.delete_shift(slot)
+        ##删除下一页
+        if record_header.status == OverFlowPage.MULTI_PAGE:
+            next_page = self.container.get_page(record_header.next_page_num)
+            next_page.delete_by_record_id(record_header.next_record_id)
+        self.sync()
+    def delete_by_record_id(self, record_id:int):
+        _,slot,record_header=self.read_record_header_by_record_id(record_id)
+        self.delete_shift(slot)
+        ##删除下一页
+        if record_header.status == OverFlowPage.MULTI_PAGE:
+            next_page = self.container.get_page(record_header.next_page_num)
+            next_page.delete_by_record_id(record_header.next_record_id)
+        self.sync()
+
 
     def delete_shift(self, slot: int) -> bool:
         if slot >= self.slot_num:
@@ -542,7 +579,6 @@ class OverFlowPage(BasePage):
                             )
 
         self.slot_num -= 1
-        self.sync()
         return True
 
 
