@@ -5,6 +5,7 @@ import os
 import struct
 from typing import Dict, Tuple
 
+from store.page import StoredPage
 from store.values import  Row
 
 
@@ -238,7 +239,12 @@ class Container:
             return self.cache[page_num]
         page_data = bytearray()
         self.read_page(page_num, page_data)
-        page = OverFlowPage(page_num, page_data)
+        page_type = struct.unpack_from('<b',page_data,0)
+        if page_type == 1:
+            page = OverFlowPage(page_num, page_data)
+        else:
+            page = StoredPage(page_num, page_data)
+
         page.set_container(self)
         self.cache[page_num] = page
         return page
@@ -254,14 +260,14 @@ class Container:
         return page
 
     def new_page(self):
-        from page import OverFlowPage
+        from page import StoredPage
         """
         新创建需要初始化
         :return:
         """
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.alloc.alloc()
-        page = OverFlowPage(page_num, page_data)
+        page = StoredPage(page_num, page_data)
         page.set_container(self)
         page.init_page()
         self.cache[page_num] = page

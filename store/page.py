@@ -3,7 +3,7 @@ import struct
 from typing import Tuple, List
 
 import config
-from store.values import Row, ByteArray, Value
+from store.values import Row, ByteArray, Value, generate_row, over_flow_row
 
 """
 slot table entry 大小固定
@@ -397,7 +397,7 @@ class OverFlowPage(BasePage):
             cur_page.sync()
             #需要写入到下一个页
             if status == MULTI_PAGE:
-                next_page:OverFlowPage = cur_page.container.new_page()
+                next_page:OverFlowPage = cur_page.container.new_over_flow_page()
                 #记录over flow信息
                 #由于要写入下一个页，赋值cur_record_id为下一页的record_id
                 cur_record_id =next_page.get_next_record_id()
@@ -442,7 +442,7 @@ class OverFlowPage(BasePage):
 
 
     def sync(self):
-        struct.pack_into('<bii', self.page_data, 0, 1, self.slot_num, self.next_id)
+        struct.pack_into('<bii', self.page_data, 0, OVER_FLOW_PAGE, self.slot_num, self.next_id)
         self.dirty = True
 
 
@@ -463,11 +463,11 @@ FIELD_NOT_OVER_FLOW_NULL = 3
 
 def get_value_status(v:Value):
     if v.len_variable():
-        if v.is_null():
+        if v.is_null:
             return FIELD_OVER_FLOW_NULL
         else:
             return FIELD_OVER_FLOW_NULL
-    if v.is_null():
+    if v.is_null:
         return FIELD_NOT_OVER_FLOW_NULL
     return FIELD_NOT_OVER_FLOW
 
@@ -518,7 +518,7 @@ class StoredPage(BasePage):
         super().__init__(page_num, page_data)
         self.page_type,self.slot_num,self.next_id,self.over_flow_page_num = struct.unpack_from('<biii', self.page_data, 0)
     def sync(self):
-        struct.pack_into('<biii', self.page_data, 0, 0, self.slot_num, self.next_id, self.over_flow_page_num)
+        struct.pack_into('<biii', self.page_data, 0, NORMAL_PAGE, self.slot_num, self.next_id, self.over_flow_page_num)
         self.dirty = True
 
     def header_size(self) -> int:
@@ -598,7 +598,7 @@ class StoredPage(BasePage):
     def get_row_data(self,row:Row)->bytearray:
         over_page = self.get_over_flow_page()
         row_data = bytearray()
-        values:List[Value] = row.values()
+        values:List[Value] = row.values
         for value in values:
             #写入定长字段
             status = get_value_status(value)
@@ -608,7 +608,7 @@ class StoredPage(BasePage):
             else:
                 #写入变长字段
                 while True:
-                    record_id,max_page_num = over_page.insert_to_last_slot(row)
+                    record_id,max_page_num = over_page.insert_to_last_slot(over_flow_row(value.get_bytes()))
                     if record_id == -1:
                         over_page = self.container.new_over_flow_page()
                         continue
@@ -636,37 +636,32 @@ class StoredPage(BasePage):
 
 
     def insert_slot(self, row: Row, slot: int,record_id:int|None = None):
-        if record_id:
-            cur_record_id = record_id
-        else:
-            cur_record_id = self.get_next_record_id()
+        if not record_id:
+            record_id = self.get_next_record_id()
 
-        cur_page = self
         #写入所有row的数据
-        column_num = len(row.values())
+        column_num = len(row.values)
         row_data = self.get_row_data(row)
         wrote_length = 0
         all_need_write_length = len(row_data)
-        while wrote_length < all_need_write_length:
-            #获取本次写入的状态和长度
-            status, data_length = cur_page.step_write(all_need_write_length,wrote_length)
-            if status == -1:
-                return -1,-1
-            record_offset = cur_page.write_data(column_num,data_length, slot, status, cur_record_id, row_data, wrote_length)
-            cur_page.slot_num += 1
-            wrote_length += data_length
-            cur_page.sync()
-            if status == MULTI_PAGE:
-                next_page:OverFlowPage = self.get_over_flow_page(StoredPage.record_min_size())
-                #记录 over flow信息
-                #由于要写入下一个页，赋值cur_record_id为下一页的record_id
-                cur_record_id =next_page.get_next_record_id()
-                cur_page.adjust_record_over_flow(record_offset,next_page.page_num,cur_record_id)
-                cur_page = next_page
-                slot = cur_page.slot_num
-        return record_id,cur_page.page_num
-
-
+        #获取本次写入的状态和长度
+        status, data_length = self.step_write(all_need_write_length,wrote_length)
+        #连头部信息到写入不进去
+        if status == -1:
+            return -1,-1
+        #把在当页的写入
+        record_offset = self.write_data(column_num,data_length, slot, status, record_id, row_data, wrote_length)
+        self.slot_num += 1
+        self.sync()
+        if status == MULTI_PAGE:
+            next_page:OverFlowPage = self.get_over_flow_page(StoredPage.record_min_size())
+            #记录 over flow信息
+            #由于要写入下一个页，赋值cur_record_id为下一页的record_id
+            next_record_id =next_page.get_next_record_id()
+            self.adjust_record_over_flow(record_offset,next_page.page_num,next_record_id)
+            #剩下的所有内容写入 over flow page
+            next_page.insert_to_last_slot(over_flow_row(row_data[data_length+StoredPage.record_min_size():]))
+        return record_id,self.page_num
 
 
 
@@ -680,4 +675,5 @@ class StoredPage(BasePage):
         """
         写入头部信息
         """
-        struct.pack_into('<biii', self.page_data, 0, 0, 0, 0,-1)
+        struct.pack_into('<biii', self.page_data, 0, NORMAL_PAGE, 0, 0,-1)
+        self.over_flow_page_num = -1

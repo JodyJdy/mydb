@@ -5,6 +5,8 @@ from typing import List
 
 
 class Value:
+    def __init__(self):
+        self.is_null = False
     @abstractmethod
     def len_variable(self):
         """长度是否可变"""
@@ -13,12 +15,6 @@ class Value:
     def space_use(self):
         pass
 
-    def is_null(self):
-        """
-        值是否为null
-        :return:
-        """
-        pass
     @abstractmethod
     def get_bytes(self)->bytearray:
         pass
@@ -33,8 +29,6 @@ class ByteArray(Value):
     def space_use(self):
         return len(self.value)
 
-    def is_null(self):
-        return self.is_null
 
     def get_bytes(self) -> bytearray:
         return self.value
@@ -81,8 +75,6 @@ class Row:
     def __init__(self,values:List[Value]):
         self.values = values
         self.space_use = self._space_use()
-    def values(self)->List[Value]:
-        pass
     def _space_use(self):
         use = 0
         for value in self.values:
@@ -94,14 +86,14 @@ class Row:
 def over_flow_row(v: bytearray):
     return Row([ByteArray(v)])
 
-def generate_row(v:List[int|str])->List[Value]:
+def generate_row(v:List[int|str])->Row:
     values: List[Value] = []
     for value in v:
         if type(value) == int:
             values.append(IntValue(value))
         elif type(value) == str:
             values.append(StrValue(value))
-    return values
+    return Row(values)
 
 print(generate_row([1,2,3,4,"hello world"]))
 
