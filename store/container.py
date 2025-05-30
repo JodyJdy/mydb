@@ -27,6 +27,8 @@ class BasePage:
 
     def insert_slot(self, row: Row, slot: int):
         pass
+    def set_container(self, container):
+        self.container = container
 
     def init_page(self):
         """新创建页面时，需要初始化"""
@@ -212,7 +214,7 @@ class ContainerAlloc:
 
 class Container:
     # 页的大小
-    PAGE_SIZE = 1024
+    PAGE_SIZE = 50
 
     def __init__(self, path: str | None = None):
         self.path = path
@@ -266,6 +268,7 @@ class Container:
         page_data = bytearray(Container.PAGE_SIZE)
         page_num = self.alloc.alloc()
         page = OverFlowPage(page_num, page_data)
+        page.set_container(self)
         page.init_page()
         return page
 
@@ -305,8 +308,6 @@ class OverFlowPage(BasePage):
         super().__init__(page_num, page_data)
         self.page_type, self.slot_num, self.next_id = struct.unpack_from('<bii', self.page_data, 0)
 
-    def set_container(self, container: Container):
-        self.container = container
 
     @staticmethod
     def cal_slot_entry_offset(slot: int):
@@ -351,7 +352,11 @@ class OverFlowPage(BasePage):
         offset, length = self.read_slot_entry(slot)
         return self.page_data[offset:offset + length]
 
-    def insert_slot(self, row: Row, slot: int):
+    def insert_slot(self, row: Row, slot: int,record_id:int|None = None):
+        """
+            返回插入记录的id 以及插入过程中写入的最大页码
+        :return:
+        """
         if not isinstance(row.values[0], OverFlowValue):
             raise TypeError('over_flow_page中只能插入OverFlowValue')
         v: OverFlowValue = row.values[0]
@@ -367,11 +372,16 @@ class OverFlowPage(BasePage):
             # 能放多少放多少
             status = OverFlowPage.MULTI_PAGE
             data_length = free_space - self.record_min_size()
+            #写入下一个页
+            page:OverFlowPage = self.container.new_page()
+            next_page_num = page.page_num
+            next_record_id = page.insert_slot(Row.single_value_row(OverFlowValue(v.value[data_length:])),0)
         # 连头部信息，slot_table_entry_size 都不能存放
         if data_length < 0:
             return -1
         # 进行存放
-        record_id = self.get_next_record_id()
+        if not record_id:
+            record_id = self.get_next_record_id()
 
         # 记录存储时真正占用的空间（不包含slot entry)
         record_length = data_length + self.record_header_size()
@@ -386,7 +396,7 @@ class OverFlowPage(BasePage):
         struct.pack_into('<ii', self.page_data, slot_start, record_start, record_length)
         # 返回插入记录的页面id
         self.slot_num += 1
-        return record_id
+        return record_id,max(self.page_num,next_page_num)
 
     def cal_record_offset(self, slot: int):
         if slot == 0:
