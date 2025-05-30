@@ -279,6 +279,16 @@ class Container:
         self.cache[page_num] = page
         return page
 
+    def new_over_flow_page(self):
+        from store.container import OverFlowPage
+        page_data = bytearray(config.PAGE_SIZE)
+        page_num = self.alloc.alloc()
+        page = OverFlowPage(page_num, page_data)
+        page.set_container(self)
+        page.init_page()
+        self.cache[page_num] = page
+        return page
+
     def new_page(self) -> BasePage:
         """
         新创建需要初始化
