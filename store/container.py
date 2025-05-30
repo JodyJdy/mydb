@@ -1,11 +1,11 @@
-import mmap
 
+import config
 import file_util
 import os
 import struct
 from typing import Dict, Tuple
 
-from store.values import OverFlowValue, Row
+from store.values import  Row
 
 
 class BasePage:
@@ -14,6 +14,7 @@ class BasePage:
     def __init__(self, page_num: int, page_data: bytearray):
         self.page_num = page_num
         self.page_data = page_data
+        self.dirty = False
 
     def sync(self):
         """
@@ -24,6 +25,16 @@ class BasePage:
 
     def header_size(self) -> int:
         pass
+    def shift_data(self, src_start: int, src_end: int, target_start: int, target_end: int):
+        """
+        移动page data内部的数据
+        :param src_start:
+        :param src_end:
+        :param target_start:
+        :param target_end:
+        :return:
+        """
+        self.page_data[target_start:target_end] = self.page_data[src_start:src_end]
 
     def insert_slot(self, row: Row, slot: int):
         pass
@@ -73,7 +84,7 @@ class Extent:
         page_num = self.alloc_new_page()
         if page_num == Extent.INVALID_PAGE_NUMBER:
             self.status = Extent.EXTENT_FILL
-        return Extent.INVALID_PAGE_NUMBER
+        return page_num
 
     def alloc_new_page(self) -> int:
         if self.has_new_page():
@@ -213,20 +224,18 @@ class ContainerAlloc:
 
 
 class Container:
-    # 页的大小
-    PAGE_SIZE = 50
-
     def __init__(self, path: str | None = None):
         self.path = path
         file_util.create_file_if_need(self.path)
         self.alloc = ContainerAlloc(self.path)
         self.file = open(self.path, 'rb+')
+        self.cache:Dict[int,BasePage]={}
 
     def get_size(self):
         return os.path.getsize(self.path)
 
     def seek_page(self, page_number: int):
-        offset = page_number * Container.PAGE_SIZE
+        offset = page_number * config.PAGE_SIZE
         self.file.seek(offset)
 
     def seek_offset(self, offset: int):
@@ -234,21 +243,21 @@ class Container:
 
     def read_page(self, page_number: int, page_data: bytearray):
         self.seek_page(page_number)
-        page_data.extend(self.file.read(Container.PAGE_SIZE))
+        page_data.extend(self.file.read(config.PAGE_SIZE))
 
     def pad_file(self, offset: int):
         cur_eof = self.get_size()
         self.file.seek(cur_eof)
-        zero_data = bytearray(Container.PAGE_SIZE)
+        zero_data = bytearray(config.PAGE_SIZE)
         while cur_eof < offset:
             diff = offset - cur_eof
-            if diff > Container.PAGE_SIZE:
-                diff = Container.PAGE_SIZE
+            if diff > config.PAGE_SIZE:
+                diff = config.PAGE_SIZE
                 self.file.write(zero_data[:diff])
             cur_eof = cur_eof + diff
 
     def write_page(self, page_number: int, page_data: bytearray):
-        offset = page_number * Container.PAGE_SIZE
+        offset = page_number * config.PAGE_SIZE
         self.seek_offset(offset)
         if not self.get_size() == offset:
             self.pad_file(offset)
@@ -260,16 +269,27 @@ class Container:
     def init_page(self):
         pass
 
+    def get_page(self,page_num:int):
+        if page_num in self.cache:
+            return self.cache[page_num]
+        page_data = bytearray()
+        self.read_page(page_num, page_data)
+        page = OverFlowPage(page_num, page_data)
+        page.set_container(self)
+        self.cache[page_num] = page
+        return page
+
     def new_page(self) -> BasePage:
         """
         新创建需要初始化
         :return:
         """
-        page_data = bytearray(Container.PAGE_SIZE)
+        page_data = bytearray(config.PAGE_SIZE)
         page_num = self.alloc.alloc()
         page = OverFlowPage(page_num, page_data)
         page.set_container(self)
         page.init_page()
+        self.cache[page_num] = page
         return page
 
     def close(self):
@@ -279,6 +299,9 @@ class Container:
     def flush(self):
         self.alloc.flush()
         self.file.flush()
+        for k, v in self.cache.items():
+            if v.dirty:
+                self.write_page(k,v.page_data)
 
 
 class OverFlowPage(BasePage):
@@ -311,7 +334,7 @@ class OverFlowPage(BasePage):
 
     @staticmethod
     def cal_slot_entry_offset(slot: int):
-        return Container.PAGE_SIZE - (slot + 1) * OverFlowPage.slot_table_entry_size()
+        return config.PAGE_SIZE - (slot + 1) * OverFlowPage.slot_table_entry_size()
 
     def read_slot_entry(self, slot) -> Tuple[int, int]:
         """
@@ -344,59 +367,120 @@ class OverFlowPage(BasePage):
         for i in range(self.slot_num):
             record_offset, record_len = self.read_slot_entry(i)
             space_used += record_len
-        return Container.PAGE_SIZE - space_used
+        return config.PAGE_SIZE - space_used
+
+    def read_by_record_id(self, record_id:int)-> bytearray | None:
+        result = bytearray()
+        for i in range(self.slot_num):
+            offset, length = self.read_slot_entry(i)
+            status,temp_record_id,length,next_page_num,next_record_id = struct.unpack_from('<biiii', self.page_data, offset)
+            if temp_record_id == record_id:
+                data_offset = offset + OverFlowPage.record_header_size()
+                result.extend(self.page_data[data_offset:data_offset + length])
+                if status == OverFlowPage.MULTI_PAGE:
+                    next_page = self.container.get_page(next_page_num)
+                    result.extend(next_page.read_by_record_id(next_record_id))
+                break
+        return result
+
 
     def read_slot(self, slot: int) -> bytearray|None:
         if slot >= self.slot_num:
             return None
+        result = bytearray()
         offset, length = self.read_slot_entry(slot)
-        return self.page_data[offset:offset + length]
+        status,temp_record_id,length,next_page_num,next_record_id = struct.unpack_from('<biiii', self.page_data, offset)
+        data_offset = offset + OverFlowPage.record_header_size()
+        result.extend(self.page_data[data_offset:data_offset + length])
+        if status == OverFlowPage.MULTI_PAGE:
+            next_page = self.container.get_page(next_page_num)
+            result.extend(next_page.read_by_record_id(next_record_id))
+        return result
 
-    def insert_slot(self, row: Row, slot: int,record_id:int|None = None):
+
+    @staticmethod
+    def get_over_flow_value(row:Row)->bytearray:
+        if not isinstance(row.values[0], bytearray):
+            raise TypeError('over_flow_page中只能插入bytearray')
+        return row.values[0]
+
+
+    def adjust_record_over_flow(self,record_offset,next_page_num:int,next_page_record_id:int):
+        """
+            调整记录的 over flow 信息
+        :param record_offset:
+        :param next_page_num:
+        :param next_page_record_id:
+        :return:
+        """
+        #跳过record的头部信息，直接调整 next_page_num next_page_record_id
+        struct.pack_into('ii',self.page_data,record_offset + 1 + 4 + 4,next_page_num,next_page_record_id)
+
+    def write_data(self,data_length:int,slot:int,status:int,cur_record_id:int,source:bytearray,src_offset:int):
+        """
+        :param src_offset: 读取数据的偏移量
+        :param source: 读取数据的元
+        :param cur_record_id:
+        :param status:
+        :param slot 插入的位置
+        :param cur_page:
+        :param data_length: 写入的数据部分的长度
+        :return: 返回record的起始位置
+        """
+        # 包含了头部的record真正写入的长度
+        record_length = data_length + OverFlowPage.record_header_size()
+        record_start, slot_start = self.insert_shift(slot, record_length)
+        # 写入头部
+        struct.pack_into('<biiii', self.page_data, record_start, status, cur_record_id, data_length, -1,
+                         -1)
+        # 写入数据部分
+        self.page_data[
+        record_start + self.record_header_size():record_start + self.record_header_size() + data_length] \
+            = source[src_offset:src_offset + data_length]
+        # 写入 slot table
+        struct.pack_into('<ii', self.page_data, slot_start, record_start, record_length)
+        return record_start
+
+    def insert_slot(self, row: Row, slot: int):
         """
             返回插入记录的id 以及插入过程中写入的最大页码
         :return:
         """
-        if not isinstance(row.values[0], OverFlowValue):
-            raise TypeError('over_flow_page中只能插入OverFlowValue')
-        v: OverFlowValue = row.values[0]
+        v = OverFlowPage.get_over_flow_value(row)
         cur_page = self
-        neet_space = v.space_use() + self.record_min_size()
-        # data_length是record中单纯数据的长度
-        status, data_length, next_page_num, next_record_id = OverFlowPage.SINGLE_PAGE, 0, -1, -1
-        free_space = self.cal_free_space()
-        # 全部都可以放下
-        if neet_space <= free_space:
-            data_length = v.space_use()
-        else:
-            # 能放多少放多少
-            status = OverFlowPage.MULTI_PAGE
-            data_length = free_space - self.record_min_size()
-            #写入下一个页
-            page:OverFlowPage = self.container.new_page()
-            next_page_num = page.page_num
-            next_record_id = page.insert_slot(Row.single_value_row(OverFlowValue(v.value[data_length:])),0)
-        # 连头部信息，slot_table_entry_size 都不能存放
-        if data_length < 0:
-            return -1
-        # 进行存放
-        if not record_id:
-            record_id = self.get_next_record_id()
-
-        # 记录存储时真正占用的空间（不包含slot entry)
-        record_length = data_length + self.record_header_size()
-        record_start, slot_start = self.insert_shift(slot, record_length)
-        # 写入头部
-        struct.pack_into('<biiii', self.page_data, record_start, status, record_id, data_length, next_page_num,
-                         next_record_id)
-        # 写入数据部分
-        self.page_data[record_start + self.record_header_size():record_start + self.record_header_size() + data_length] \
-            = v.value[0:data_length]
-        # 写入 slot table
-        struct.pack_into('<ii', self.page_data, slot_start, record_start, record_length)
-        # 返回插入记录的页面id
-        self.slot_num += 1
-        return record_id,max(self.page_num,next_page_num)
+        result_record_id=cur_record_id = self.get_next_record_id()
+        #已经写入的数据长度
+        wrote_length = 0
+        #全部需要写入的数据长度
+        all_need_write_length = len(v)
+        while wrote_length < all_need_write_length:
+            #本次写入需要的空间
+            need_space = all_need_write_length - wrote_length + OverFlowPage.record_min_size()
+            # data_length是record中单纯数据的长度
+            status, data_length, next_page_num, next_record_id = OverFlowPage.SINGLE_PAGE, 0, -1, -1
+            free_space = cur_page.cal_free_space()
+            # 全部都可以放下
+            if need_space <= free_space:
+                data_length =  all_need_write_length - wrote_length
+            else:
+                status = OverFlowPage.MULTI_PAGE
+                data_length = free_space - OverFlowPage.record_min_size()
+            # 连头部信息，slot_table_entry_size 都不能存放
+            if data_length < 0:
+                return -1
+            #写入一条record的数据，返回record的便宜
+            record_offset=cur_page.write_data(data_length, slot, status, cur_record_id ,v,wrote_length)
+            cur_page.slot_num += 1
+            wrote_length += data_length
+            cur_page.sync()
+            #需要写入到下一个页
+            if status == OverFlowPage.MULTI_PAGE:
+                next_page:OverFlowPage = cur_page.container.new_page()
+                #记录over flow信息
+                cur_page.adjust_record_over_flow(record_offset,next_page.page_num,next_page.get_next_record_id())
+                cur_page = next_page
+                slot = 0
+        return result_record_id,cur_page.page_num
 
     def cal_record_offset(self, slot: int):
         if slot == 0:
@@ -420,7 +504,7 @@ class OverFlowPage(BasePage):
             return False
         # 删除最后一个，使用填充0的方式
         if slot == self.slot_num - 1:
-            struct.pack_into('<ii', self.page_data, Container.PAGE_SIZE - self.slot_num * self.slot_table_entry_size(),
+            struct.pack_into('<ii', self.page_data, config.PAGE_SIZE - self.slot_num * self.slot_table_entry_size(),
                              0, 0)
             self.slot_num -= 1
             return True
@@ -449,19 +533,18 @@ class OverFlowPage(BasePage):
             # 进行数据的移动 record向后移动， slot table向前移动
             moved_record_offset = move_record_start - remove_record_length
 
-            self.set_data(move_record_start, move_record_start + move_record_len,
-                          moved_record_offset, moved_record_offset + move_record_len)
+            self.shift_data(move_record_start, move_record_start + move_record_len,
+                            moved_record_offset, moved_record_offset + move_record_len)
             # 调整slot table
-            self.set_data(move_slot_entry_start, move_slot_entry_end,
-                          move_slot_entry_start + self.slot_table_entry_size(),
-                          move_slot_entry_end + self.slot_table_entry_size()
-                          )
+            self.shift_data(move_slot_entry_start, move_slot_entry_end,
+                            move_slot_entry_start + self.slot_table_entry_size(),
+                            move_slot_entry_end + self.slot_table_entry_size()
+                            )
 
         self.slot_num -= 1
+        self.sync()
         return True
 
-    def set_data(self, src_start: int, src_end: int, target_start: int, target_end: int):
-        self.page_data[target_start:target_end] = self.page_data[src_start:src_end]
 
     def insert_shift(self, slot: int, record_length: int):
         """
@@ -493,16 +576,17 @@ class OverFlowPage(BasePage):
             # 进行数据的移动 record向后移动， slot table向前移动
             # 要移动的数据的偏移 + 插入数据的长度， 就是移动后的偏移
             moved_record_offset = move_record_start + record_length
-            self.set_data(move_record_start, move_record_start + move_record_len
-                          , moved_record_offset, moved_record_offset + move_record_len)
+            self.shift_data(move_record_start, move_record_start + move_record_len
+                            , moved_record_offset, moved_record_offset + move_record_len)
             # 移动 slot table
-            self.set_data(move_slot_entry_start, move_slot_entry_end
-                          , move_slot_entry_start - self.slot_table_entry_size(),
-                          move_slot_entry_end - self.slot_table_entry_size())
+            self.shift_data(move_slot_entry_start, move_slot_entry_end
+                            , move_slot_entry_start - self.slot_table_entry_size(),
+                            move_slot_entry_end - self.slot_table_entry_size())
         return move_record_start, new_slot_entry_start
 
     def sync(self):
         struct.pack_into('<bii', self.page_data, 0, 1, self.slot_num, self.next_id)
+        self.dirty = True
 
     def get_next_record_id(self):
         """

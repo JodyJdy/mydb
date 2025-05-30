@@ -16,31 +16,22 @@ class Value:
         pass
 
 class Row:
-    def __init__(self,values:List[Value]):
+    def __init__(self,values:List[Value|bytearray]):
         self.values = values
         self.space_use = self._space_use()
-    def values(self)->List[Value]:
+    def values(self)->List[Value|bytearray]:
         pass
     def _space_use(self):
         use = 0
         for value in self.values:
-            use += value.space_use()
+            if isinstance(value, bytearray):
+                use+=len(value)
+            else:
+                use += value.space_use()
         return use
 
     @staticmethod
-    def single_value_row(v:Value):
+    def single_value_row(v:Value|bytearray):
         return Row([v])
-
-class OverFlowValue(Value):
-    def __init__(self,v:bytearray):
-        self.value = v
-    def len_variable(self):
-        return True
-
-    def space_use(self):
-        return len(self.value)
-
-    def get_bytes(self) -> bytearray:
-        return self.value
 
 
