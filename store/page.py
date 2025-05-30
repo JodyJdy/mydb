@@ -349,6 +349,22 @@ class OverFlowPage(BasePage):
         struct.pack_into('<ii', self.page_data, slot_start, record_start, record_length)
         return record_start
 
+    def step_write(self,all_need_write_length:int,wrote_length:int):
+        #本次写入需要的空间
+        need_space = all_need_write_length - wrote_length + OverFlowPage.record_min_size()
+        # data_length是record中单纯数据的长度
+        status, data_length  = SINGLE_PAGE, 0
+        free_space = self.cal_free_space()
+        # 全部都可以放下
+        if need_space <= free_space:
+            data_length =  all_need_write_length - wrote_length
+        else:
+            status = MULTI_PAGE
+            data_length = free_space - OverFlowPage.record_min_size()
+        # 连头部信息，slot_table_entry_size 都不能存放
+        if data_length < 0:
+            return -1,-1
+        return status,data_length
     def insert_to_last_slot(self,row:Row,record_id:int|None=None):
         return self.insert_slot(row,self.slot_num,record_id)
 
@@ -369,19 +385,10 @@ class OverFlowPage(BasePage):
         #全部需要写入的数据长度
         all_need_write_length = len(v)
         while wrote_length < all_need_write_length:
-            #本次写入需要的空间
-            need_space = all_need_write_length - wrote_length + OverFlowPage.record_min_size()
-            # data_length是record中单纯数据的长度
-            status, data_length  = SINGLE_PAGE, 0
-            free_space = cur_page.cal_free_space()
-            # 全部都可以放下
-            if need_space <= free_space:
-                data_length =  all_need_write_length - wrote_length
-            else:
-                status = MULTI_PAGE
-                data_length = free_space - OverFlowPage.record_min_size()
+            #获取本次写入的状态和长度
+            status, data_length = cur_page.step_write(all_need_write_length,wrote_length)
             # 连头部信息，slot_table_entry_size 都不能存放
-            if data_length < 0:
+            if status == -1:
                 return -1,-1
             #写入一条record的数据，返回record的偏移
             record_offset=cur_page.write_data(data_length, slot, status, cur_record_id ,v,wrote_length)
@@ -610,6 +617,24 @@ class StoredPage(BasePage):
                     break
         return row_data
 
+    def step_write(self,all_write_length:int,wrote_length:int):
+        #本次写入需要的空间
+        need_space = all_write_length - wrote_length + StoredPage.record_min_size()
+        # data_length是record中单纯数据的长度
+        status, data_length = SINGLE_PAGE, 0,
+        free_space = self.cal_free_space()
+        if need_space <= free_space:
+            data_length =  all_write_length - wrote_length
+        else:
+            status = MULTI_PAGE
+            data_length = free_space - StoredPage.record_min_size()
+        # 连头部信息，slot_table_entry_size 都不能存放
+        if data_length < 0:
+            return -1,-1
+        return status,data_length
+
+
+
     def insert_slot(self, row: Row, slot: int,record_id:int|None = None):
         if record_id:
             cur_record_id = record_id
@@ -623,20 +648,10 @@ class StoredPage(BasePage):
         wrote_length = 0
         all_need_write_length = len(row_data)
         while wrote_length < all_need_write_length:
-            #本次写入需要的空间
-            need_space = all_need_write_length - wrote_length + StoredPage.record_min_size()
-            # data_length是record中单纯数据的长度
-            status, data_length = SINGLE_PAGE, 0,
-            free_space = cur_page.cal_free_space()
-            if need_space <= free_space:
-                data_length =  all_need_write_length - wrote_length
-            else:
-                status = MULTI_PAGE
-                data_length = free_space - StoredPage.record_min_size()
-            # 连头部信息，slot_table_entry_size 都不能存放
-            if data_length < 0:
+            #获取本次写入的状态和长度
+            status, data_length = cur_page.step_write(all_need_write_length,wrote_length)
+            if status == -1:
                 return -1,-1
-
             record_offset = cur_page.write_data(column_num,data_length, slot, status, cur_record_id, row_data, wrote_length)
             cur_page.slot_num += 1
             wrote_length += data_length
