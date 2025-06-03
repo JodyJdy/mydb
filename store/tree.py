@@ -136,7 +136,7 @@ class BTree:
             node.parent.keys.insert(node_in_parent_index,right_node.keys[0])
             node.parent.values.insert(node_in_parent_index+1,right_node)
             return
-        self.split_brand_node(node.parent, right_node.keys[0], right_node,node_in_parent_index)
+        self.split_branch_node(node.parent, right_node.keys[0], right_node, node_in_parent_index)
 
     @staticmethod
     def find_index_for_key_insert(keys,k):
@@ -157,7 +157,7 @@ class BTree:
         """
         return FULL // 2
 
-    def split_brand_node(self, node, key, value,key_index):
+    def split_branch_node(self, node, key, value, key_index):
         #左边分配的长度
         mid = FULL//2
 
@@ -212,15 +212,7 @@ class BTree:
             node.parent.keys.insert(node_in_parent_index,mid_key)
             node.parent.values.insert(node_in_parent_index+1,right_node)
             return
-        self.split_brand_node(node.parent, mid_key, right_node, node_in_parent_index)
-    def update_branch_key(self,node:BranchNode,expect,replace):
-        if not isinstance(node,BranchNode):
-            return
-        if expect in node.keys:
-            index = node.keys.index(expect)
-            node.keys[index] = replace
-            return
-
+        self.split_branch_node(node.parent, mid_key, right_node, node_in_parent_index)
 
 
     def delete(self,key):
