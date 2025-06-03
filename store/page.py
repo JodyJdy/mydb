@@ -1,6 +1,6 @@
 import struct
 
-from typing import Tuple, List
+from typing import Tuple, List, Any
 
 import config
 from store.values import Row, ByteArray, Value, generate_row, over_flow_row
@@ -120,7 +120,7 @@ class BasePage:
         :return:
         """
         pass
-    def read_record(self,record_id:int)->bytearray|None:
+    def read_record(self,record_id:int)->bytearray|None|Any:
         """
         根据record id 读取页的内容
         :param record_id:
@@ -466,7 +466,7 @@ def get_value_status(v:Value):
         if v.is_null:
             return FIELD_OVER_FLOW_NULL
         else:
-            return FIELD_OVER_FLOW_NULL
+            return FIELD_OVER_FLOW
     if v.is_null:
         return FIELD_NOT_OVER_FLOW_NULL
     return FIELD_NOT_OVER_FLOW
@@ -483,6 +483,33 @@ def cal_space_use(value:Value)->int:
         # 1 + field length field data
         space_use+=1 + 4 + value.space_use()
     return space_use
+
+class StorePageRecorderHeader:
+    def __init__(self, status:int, record_id:int, col_num:int, next_page_num:int, next_record_id:int):
+        self.status = status
+        self.record_id = record_id
+        self.col_num = col_num
+        self.next_page_num = next_page_num
+        self.next_record_id = next_record_id
+    def __repr__(self):
+        return f'status={self.status},record_id={self.record_id},col_num={self.col_num},next_page_num={self.next_page_num},next_record_id={self.next_record_id}'
+class Field:
+   def __init__(self):
+       self.value = None
+       self.over_flow_page = None
+       self.over_flow_record = None
+
+   def set_value(self,value:bytearray):
+       self.value = value
+   def __repr__(self):
+           return f'value:{self.value}'
+
+class Record:
+    def __init__(self,header:StorePageRecorderHeader,fields:List[Field]):
+        self.header = header
+        self.fields = fields
+    def __repr__(self):
+        return f'header={self.header},fields={self.fields}'
 
 class StoredPage(BasePage):
     """
@@ -594,6 +621,21 @@ class StoredPage(BasePage):
             self.over_flow_page_num = over_page.page_num
         return over_page
 
+    def read_record_header_by_slot(self,slot:int)->Tuple[int,int,StorePageRecorderHeader]:
+        offset, record_length = self.read_slot_entry(slot)
+        return offset,record_length,StorePageRecorderHeader(*struct.unpack_from('<biiii', self.page_data, offset))
+
+    def read_record_header_by_record_id(self,record_id:int)->Tuple[None,None,None,None]|Tuple[int,int,int,StorePageRecorderHeader]:
+        """
+        返回 记录偏移，记录长度 slot record_header
+
+        """
+        for i in range(self.slot_num):
+            offset,record_length,record_header = self.read_record_header_by_slot(i)
+            if record_header.record_id == record_id:
+                return offset,record_length,i,record_header
+        return None,None,None,None
+
 
     def get_row_data(self,row:Row)->bytearray:
         over_page = self.get_over_flow_page()
@@ -663,13 +705,112 @@ class StoredPage(BasePage):
             next_page.insert_to_last_slot(over_flow_row(row_data[data_length+StoredPage.record_min_size():]))
         return record_id,self.page_num
 
+    def parse_record(self,row_data:bytearray, header:StorePageRecorderHeader)->Record:
+        fields = []
+        offset = 0
+        for i in range(header.col_num):
+            status, = struct.unpack_from('<b',row_data,offset)
+            field = Field()
+            offset +=1
+            fields.append(field)
+            if status == FIELD_OVER_FLOW_NULL or status == FIELD_NOT_OVER_FLOW_NULL:
+                continue
+            # over_flow_page num over_flow_record
+            if  status == FIELD_OVER_FLOW:
+                next_page_num,next_record_id = struct.unpack_from('<ii',row_data,offset)
+                next_page:OverFlowPage = self.container.get_page(next_page_num)
+                field.set_value(next_page.read_record(next_record_id))
+                field.over_flow_page,field.over_flow_record = next_page,next_record_id
+                offset+=4 + 4
+            else:
+                # fieldLength fieldData
+                field_length, = struct.unpack_from('<i',row_data,offset)
+                offset += 4
+                field.set_value(row_data[offset:offset+field_length])
+                offset+=field_length
+        return Record(header,fields)
 
+    def read_slot(self,slot:int)->Record|None:
+        if slot >= self.slot_num:
+            return None
+        """
+       读取 记录，以及记录所在的槽位
+        """
+        row_data = bytearray()
+        offset,record_length,record_header = self.read_record_header_by_slot(slot)
+        if not offset:
+            return None
+        data_offset = offset + StoredPage.record_header_size()
+        row_data.extend(self.page_data[data_offset:data_offset + record_length])
+        if record_header.status == MULTI_PAGE:
+            next_page = self.container.get_page(record_header.next_page_num)
+            row_data.extend(next_page.read_record(record_header.next_record_id))
+        record = self.parse_record(row_data,record_header)
+        return record
+
+    def read_record(self, record_id:int)->Tuple[Record,int]|Tuple[None,None]:
+        """
+        读取 记录，以及记录所在的槽位
+        """
+        row_data = bytearray()
+        offset,record_length,slot,record_header = self.read_record_header_by_record_id(record_id)
+        if not offset:
+            return None,None
+        data_offset = offset + StoredPage.record_header_size()
+        # 记录长度 - 头部长度是数据部分长度
+        data_length = record_length - self.record_header_size()
+        row_data.extend(self.page_data[data_offset:data_offset + data_length])
+        if record_header.status == MULTI_PAGE:
+            next_page = self.container.get_page(record_header.next_page_num)
+            row_data.extend(next_page.read_record(record_header.next_record_id))
+        record = self.parse_record(row_data,record_header)
+        return record,slot
 
     def delete_by_slot(self, slot: int):
-        super().delete_by_slot(slot)
+        """
+        返回删除数据原先所处的slot
+        :param record_id:
+        :return:
+        """
+        record = self.read_slot(slot)
+        #先删除含有 over flow的 col
+        for field in record.fields:
+            if not field.value:
+                continue
+            if not field.over_flow_page:
+                next_page = self.container.get_page(field.over_flow_page)
+                next_page.delete_by_record_id(field.over_flow_record)
+        #删除当页的数据
+        self.delete_shift(slot)
+        ##删除下一页
+        if record.header.status == MULTI_PAGE:
+            next_page = self.container.get_page(record.header.next_page_num)
+            next_page.delete_by_record_id(record.header.next_record_id)
+        self.sync()
+        return slot
 
     def delete_by_record_id(self, record_id: int):
-        super().delete_by_record_id(record_id)
+        """
+        返回删除数据原先所处的slot
+        :param record_id:
+        :return:
+        """
+        record,slot = self.read_record(record_id)
+        #先删除含有 over flow的 col
+        for field in record.fields:
+            if field.null:
+                continue
+            if field.is_over_flow():
+                next_page = self.container.get_page(field.over_flow_page_num)
+                next_page.delete_by_record_id(field.over_flow_record_id)
+        #删除当页的数据
+        self.delete_shift(slot)
+        ##删除下一页
+        if record.record_header.status == MULTI_PAGE:
+            next_page = self.container.get_page(record.record_header.next_page_num)
+            next_page.delete_by_record_id(record.record_header.next_record_id)
+        self.sync()
+        return slot
 
     def init_page(self):
         """
