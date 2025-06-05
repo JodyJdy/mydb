@@ -312,8 +312,8 @@ class BTree:
 
         parent = node.parent
         node_in_parent_index = parent.values.index(node)
-        left_sibling:LeafNode = node.left if node.left and node.left.parent == parent else None
-        right_sibling:LeafNode = node.right if node.right and node.right.parent == parent else None
+        left_sibling:BranchNode = node.left if node.left and node.left.parent == parent else None
+        right_sibling:BranchNode = node.right if node.right and node.right.parent == parent else None
 
         if left_sibling and self.could_borrow(left_sibling):
             key = left_sibling.keys.pop()
@@ -382,31 +382,28 @@ class BTree:
 t = BTree(False)
 
 def del_tree(t:BTree,start,end):
-    for i in range(start,end+1):
-        t.delete(i)
+    for i in range(start,end):
+        t.delete(i+1)
 
 
-for i in range(10000):
-    t.insert(i+1,i+1)
+def test_tree():
+    for i in range(10000):
+        t.insert(i+1,i+1)
 
 
-# del_tree(t,100,150)
-# del_tree(t,1000,5000)
-# del_tree(t,9000,9999)
-# del_tree(t,8000,8999)
-# del_tree(t,6000,7777)
-# del_tree(t,200,900)
-first = t.search(1)
-count = 0
-while first:
-    count+=len(first.values)
-    print(first.values)
-    if first.right:
+    del_tree(t,100,150)
+    del_tree(t,1000,5000)
+    del_tree(t,9000,9999)
+    del_tree(t,8000,8999)
+    del_tree(t,6000,7777)
+    del_tree(t,200,900)
+    first = t.search(1)
+    count = 0
+    while first:
+        count+=len(first.values)
+        print(first.values)
         first = first.right
-    else:
-        break
-
-print(count)
+    print(count)
 
 
 

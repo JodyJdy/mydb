@@ -1,7 +1,7 @@
 from typing import Tuple, List
 from values import Row,generate_row
 
-FULL = 10
+FULL = 9
 
 
 class BranchRow:
@@ -183,7 +183,11 @@ class BTree:
         """
         如果一个节点比 min_key_num 加1，就可以借
         """
-        return len(node.keys) >= self.min_key_num() + 1
+        # LeafNode 有几行就有几个key
+        if isinstance(node,LeafNode):
+            return len(node.rows) >= self.min_key_num() + 1
+        # BranNode key=rows - 1
+        return len(node.rows) - 1 >= self.min_key_num() + 1
 
     def min_key_num(self):
         """
@@ -247,26 +251,16 @@ class BTree:
 
     def delete(self,key):
         node = self._search(key, self.tree)
-        if key not in node.keys:
+
+        index = node.key_index(key)
+        if index == -1:
             print(f'key={key}不存在')
             return None
-        index = node.keys.index(key)
-
-        #有重复节点
-        # if duplicate_node and isinstance(duplicate_node,BranchNode):
-        #     if i + 1 < len(node.keys):
-        #         duplicate_node.keys[duplicate_index] = node.keys[index + 1]
-        #     elif node.right is not None:
-        #         duplicate_node.keys[duplicate_index] = node.right.keys[0]
-        #     else:
-        #         raise Exception('异常情况')
         #删除叶子节点的key
-        node.keys.pop(index)
-        #删除叶子节点的value，并返回
-        result = node.values.pop(index)
+        result = node.rows.pop(index)
 
-        #个数不够
-        if len(node.keys) < self.min_key_num():
+        #key的数量是rows -1
+        if len(node.rows) - 1 < self.min_key_num():
             #root节点直接删除即可
             if not node.is_root:
                 self.leaf_node_un_balance(node)
@@ -284,38 +278,29 @@ class BTree:
             处理索引节点
 
         """
-        node_in_parent_index = node.parent.values.index(node)
+        node_in_parent_index = node.parent.child_index(node)
         left_sibling:LeafNode = node.left if node.left and node.left.parent == node.parent else None
         right_sibling:LeafNode = node.right if node.right and node.right.parent == node.parent else None
         if left_sibling and self.could_borrow(left_sibling):
-            key = left_sibling.keys.pop()
-            value = left_sibling.values.pop()
-            node.keys.insert(0,key)
-            node.values.insert(0,value)
+            row = left_sibling.rows.pop()
+            node.rows.insert(0,row)
             #替换父节点中的key  这里可以取等值，和下方的处理方式不一样
-            node.parent.keys[node_in_parent_index - 1] = key
-
+            node.parent.rows[node_in_parent_index].key = self.get_key(row)
             return
 
         if right_sibling and self.could_borrow(right_sibling):
-            key = right_sibling.keys.pop(0)
-            value = right_sibling.values.pop(0)
-            node.keys.append(key)
-            node.values.append(value)
+            row = right_sibling.rows.pop(0)
+            node.rows.append(row)
             #替换父节点中的key
             # node.parent.keys[node_in_parent_index] = key
             # 这里和上方的处理不一样
-            node.parent.keys[node_in_parent_index] = right_sibling.keys[0]
+            node.parent.rows[node_in_parent_index+1].key = self.get_key(right_sibling.rows[0])
             return
         if left_sibling:
             #合并到左节点
-            left_sibling.keys.extend(node.keys)
-            left_sibling.values.extend(node.values)
+            left_sibling.rows.extend(node.rows)
             #从父节点中删除当前节点
-            node.parent.values.pop(node_in_parent_index)
-            #删除key
-            node.parent.keys.pop(node_in_parent_index-1)
-
+            node.parent.rows.pop(node_in_parent_index)
             #调整左右节点
             left_sibling.right = node.right
             if node.right:
@@ -324,12 +309,9 @@ class BTree:
             return
         if right_sibling:
             #合并右节点到node
-            node.keys.extend(right_sibling.keys)
-            node.values.extend(right_sibling.values)
+            node.rows.extend(right_sibling.rows)
             #从父节点中删除右节点
-            node.parent.values.pop(node_in_parent_index+1)
-            #删除key
-            node.parent.keys.pop(node_in_parent_index)
+            node.parent.rows.pop(node_in_parent_index+1)
             #调整左右节点
             node.right = right_sibling.right
             if right_sibling.right:
@@ -347,56 +329,53 @@ class BTree:
          当前结点和兄弟结点及父结点下移key合并成一个新的结点。将当前结点指向父结点
         """
         #个数够了结束
-        if len(node.keys) >= self.min_key_num():
+        if len(node.rows) - 1 >= self.min_key_num():
             return
         #根节点允许一定的不平衡
         if node.is_root:
-            if len(node.keys)==0:
-                self.tree = node.values[0]
+            if len(node.rows)==1:
+                self.tree = node.rows[0].child
                 self.tree.parent = None
                 self.tree.is_root = True
             return
 
         parent = node.parent
-        node_in_parent_index = parent.values.index(node)
-        left_sibling:LeafNode = node.left if node.left and node.left.parent == parent else None
-        right_sibling:LeafNode = node.right if node.right and node.right.parent == parent else None
+        node_in_parent_index = parent.child_index(node)
+        left_sibling:BranchNode = node.left if node.left and node.left.parent == parent else None
+        right_sibling:BranchNode = node.right if node.right and node.right.parent == parent else None
 
         if left_sibling and self.could_borrow(left_sibling):
-            key = left_sibling.keys.pop()
-            value = left_sibling.values.pop()
+            row = left_sibling.rows.pop()
             #父节点的key下移动
-            node.keys.insert(0,parent.keys[node_in_parent_index-1])
+            node.rows[0].key= parent.rows[node_in_parent_index].key
             #兄弟节点的key上移动,移动到父亲节点
-            parent.keys[node_in_parent_index-1] = key
+            parent.rows[node_in_parent_index].key = row.key
             #兄弟节点移除的value给node节点 ！！！！ 需要调整 left right 关系
-            node.values.insert(0,value)
-            value.parent = node
+            node.rows.insert(0,row)
+            row.key = None
+            row.child.parent = node
             return
         if right_sibling and self.could_borrow(right_sibling):
-            key = right_sibling.keys.pop(0)
-            value = right_sibling.values.pop(0)
+            #移除 right_sibling第一个元素
+            row = right_sibling.rows.pop(0)
+            parent_key = parent.rows[node_in_parent_index + 1].key
+            parent.rows[node_in_parent_index+1].key  = right_sibling.rows[0].key
+            #设置头部的key为None
+            right_sibling.rows[0].key = None
+            node.rows.append(row)
             #父节点的key下移
-            node.keys.append(parent.keys[node_in_parent_index])
-            #兄弟节点的key上移动,移动到父亲节点
-            parent.keys[node_in_parent_index] = key
-            #兄弟节点移除的value给node节点  需要调整 !!!! left right 关系
-            node.values.append(value)
-            value.parent = node
+            row.key = parent_key
+            row.child.parent = node
             return
 
         if left_sibling:
             #合并到左节点
             #从父节点中移除 key 和node
-            parent_key = parent.keys.pop(node_in_parent_index-1)
-            #从父节点删除node
-            parent.values.pop(node_in_parent_index)
-            #父节点key
-            left_sibling.keys.append(parent_key)
-            left_sibling.keys.extend(node.keys)
-            left_sibling.values.extend(node.values)
-            for v in node.values:
-                v.parent = left_sibling
+            parent_row = parent.rows.pop(node_in_parent_index)
+            node.rows[0].key = parent_row.key
+            left_sibling.rows.extend(node.rows)
+            for v in node.rows:
+                v.child.parent = left_sibling
             left_sibling.right = node.right
             if node.right:
                 node.right.left = left_sibling
@@ -405,14 +384,11 @@ class BTree:
 
         if right_sibling:
             #右节点合并到node
-            parent_key = parent.keys.pop(node_in_parent_index)
-            #删除 right_sibling
-            parent.values.pop(node_in_parent_index+1)
-            node.keys.append(parent_key)
-            node.keys.extend(right_sibling.keys)
-            node.values.extend(right_sibling.values)
-            for v in right_sibling.values:
-                v.parent = node
+            parent_row = parent.rows.pop(node_in_parent_index+1)
+            right_sibling.rows[0].key = parent_row.key
+            node.rows.extend(right_sibling.rows)
+            for v in right_sibling.rows:
+                v.child.parent = node
             node.right = right_sibling.right
             if right_sibling.right:
                 right_sibling.right.left = node
@@ -422,18 +398,32 @@ class BTree:
 
 
 
+def del_tree(t:BTree,start,end):
+    for i in range(start,end):
+        t.delete(generate_row([i+1]))
 
 
+def test_tree():
+    t = BTree(1,False)
+
+    for i in range(10000):
+        t.insert(generate_row([i+1]))
+
+    del_tree(t,100,150)
+    del_tree(t,1000,5000)
+    del_tree(t,9000,9999)
+    del_tree(t,8000,8999)
+    del_tree(t,6000,7777)
+    del_tree(t,200,900)
 
 
-t = BTree(1,False)
-
-for i in range(10000):
-    t.insert(generate_row([i+1]))
-start = t.search(generate_row([1]))
-while start:
-    print(start)
-    start =start.right
+    first = t.search(generate_row([1]))
+    count = 0
+    while first:
+        count+=len(first.rows)
+        print(first.rows)
+        first =first.right
+    print(count)
 
 
 
