@@ -1,15 +1,14 @@
+import math
 import struct
 import typing
 from abc import abstractmethod
 
 from typing import List, Any, Dict, Callable
 
-
-
 class Value:
     def __init__(self):
         self.is_null = False
-        self.result = None
+        self.bytes_content = None
         self.value = None
     @abstractmethod
     def len_variable(self):
@@ -60,7 +59,6 @@ class ByteArray(Value):
     def from_bytes(value:bytearray)->Value|None:
         return ByteArray(value)
 
-
 class StrValue(Value):
     def __init__(self,value:str):
         super().__init__()
@@ -77,44 +75,100 @@ class StrValue(Value):
         return True
 
     def init_result(self):
-        self.result = bytearray()
+        self.bytes_content = bytearray()
         if self.value:
-            self.result.extend(self.value.encode('utf-8'))
+            self.bytes_content.extend(self.value.encode('utf-8'))
 
     def space_use(self):
-        if not self.result:
+        if not self.bytes_content:
             self.init_result()
-        return len(self.result)
+        return len(self.bytes_content)
 
     def get_bytes(self) -> bytearray:
-        if not self.result:
+        if not self.bytes_content:
             self.init_result()
-        return self.result
+        return self.bytes_content
 
     def __repr__(self):
         return f"str:{self.value}"
 
+def int_to_bytes(num,size):
+    if num == 0:
+        return b'\x00' * size
+    # size = math.ceil(num.bit_length() / 8)
+    return num.to_bytes(size, byteorder='little', signed=True)
+
+class ShortValue(Value):
+    """
+        2 字节
+    """
+    def len_variable(self):
+        return False
+    def space_use(self):
+        return 2
+    def get_bytes(self) -> bytearray:
+        return self.bytes_content
+    def __init__(self,value:int,is_null:bool=False):
+        super().__init__()
+        self.value = value
+        self.is_null = is_null
+        if not is_null:
+            self.bytes_content = int_to_bytes(value,2)
+
+    @staticmethod
+    def from_bytes(value:bytearray)->Value|None:
+        return IntValue(int.from_bytes(value, byteorder='little', signed=True))
+
+    def __repr__(self):
+        return f"short:{self.value}"
+
 
 class IntValue(Value):
+    """
+        4 字节
+    """
     def len_variable(self):
         return False
     def space_use(self):
         return 4
     def get_bytes(self) -> bytearray:
-        result = bytearray(4)
-        struct.pack_into('<i',result,0, self.value)
-        return result
+        return self.bytes_content
     def __init__(self,value:int,is_null:bool=False):
         super().__init__()
         self.value = value
         self.is_null = is_null
+        if not is_null:
+            self.bytes_content = int_to_bytes(value,4)
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
-        return IntValue(struct.unpack_from('<i',value)[0])
+        return IntValue(int.from_bytes(value, byteorder='little', signed=True))
 
     def __repr__(self):
         return f"int:{self.value}"
+
+class LongValue(Value):
+    """
+        8 字节
+    """
+    def len_variable(self):
+        return False
+    def space_use(self):
+        return 8
+    def get_bytes(self) -> bytearray:
+        return self.bytes_content
+    def __init__(self,value:int,is_null:bool=False):
+        super().__init__()
+        self.value = value
+        self.is_null = is_null
+        if not is_null:
+            self.bytes_content = int_to_bytes(value,8)
+    def __repr__(self):
+        return f'long:{self.value}'
+
+    @staticmethod
+    def from_bytes(value:bytearray)->Value|None:
+        return LongValue(int.from_bytes(value, byteorder='little', signed=True))
 
 class Row:
     """
@@ -192,6 +246,7 @@ def generate_row(v:List[int|str|bytearray])->Row:
 _value_type_dict:Dict[typing.Type[Value],Callable[[bytearray],Value]] = {
     StrValue: StrValue.from_bytes,
     IntValue: IntValue.from_bytes,
+    LongValue: LongValue.from_bytes,
     ByteArray: ByteArray.from_bytes,
 }
 
