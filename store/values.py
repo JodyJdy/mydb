@@ -183,6 +183,8 @@ class Row:
         for value in self.values:
             use += value.space_use()
         return use
+    def sub_row(self,start:int):
+        return Row(self.values[start:])
     def __repr__(self):
         return str(self.values)
 

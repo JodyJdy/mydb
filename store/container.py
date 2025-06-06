@@ -5,7 +5,7 @@ import os
 import struct
 from typing import Dict, Tuple
 
-from store.page import StoredPage
+from store.page import StoredPage, CommonPage
 
 
 class Extent:
@@ -241,8 +241,10 @@ class Container:
         page_type = struct.unpack_from('<b',page_data,0)
         if page_type == 1:
             page = OverFlowPage(page_num, page_data)
-        else:
+        elif page_type == 0:
             page = StoredPage(page_num, page_data)
+        else:
+            page = CommonPage(page_num, page_data)
 
         page.set_container(self)
         self.cache[page_num] = page
@@ -257,6 +259,16 @@ class Container:
         page.init_page()
         self.cache[page_num] = page
         return page
+    def new_common_page(self):
+        from page import CommonPage
+        page_data = bytearray(config.PAGE_SIZE)
+        page_num = self.alloc.alloc()
+        page = CommonPage(page_num, page_data)
+        page.set_container(self)
+        page.init_page()
+        self.cache[page_num] = page
+        return page
+
 
     def new_page(self):
         from page import StoredPage
