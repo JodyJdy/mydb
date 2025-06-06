@@ -241,6 +241,8 @@ def generate_row(v:List[int|str|bytearray])->Row:
             values.append(IntValue(value))
         elif type(value) == str:
             values.append(StrValue(value))
+        elif type(value) == bytearray:
+            values.append(ByteArray(value))
     return Row(values)
 """
  根据类型，生成对应的值

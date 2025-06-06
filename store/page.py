@@ -82,6 +82,13 @@ class BasePage:
         pass
 
     def insert_to_last_slot(self,row:Row,record_id:int|None=None):
+        """
+        所有的新增只要追加在尾部就行， 修改 slot 的映射关系即可
+        数据的逻辑顺序由slot决定， record实际在page上面的顺序是不固定的
+        :param row:
+        :param record_id:
+        :return:
+        """
         pass
     def insert_slot(self, row: Row, slot: int,record_id:int|None = None):
         pass
@@ -219,6 +226,19 @@ class BasePage:
 
         self.slot_num -= 1
         return True
+    def copy_slot(self,src_slot:int,target_slot:int)->None:
+        """
+         将slot table src_slot的内容拷贝到 target_slot
+        :param src_slot:
+        :param target_slot:
+        :return:
+        """
+        #读取src_slot的内容
+        record_offset,record_len = self.read_slot_entry(src_slot)
+        struct.pack_into("<ii",self.page_data,cal_slot_entry_offset(target_slot),record_offset,record_len)
+    def set_slot(self,slot:int,record_offset:int,record_len:int):
+        struct.pack_into("<ii",self.page_data,cal_slot_entry_offset(slot),record_offset,record_len)
+
     def move_and_insert_slot(self,src_slot:int,target_slot:int):
         """
         移动一个slot插入到另一个slot的位置
@@ -229,7 +249,18 @@ class BasePage:
         :param target_slot:
         :return:
         """
-        pass
+        if src_slot == target_slot:
+            return
+        src_record_offset,src_record_len = self.read_slot_entry(src_slot)
+        if src_slot > target_slot:
+             #向前移动
+            for i in range(src_slot, target_slot,-1):
+                self.copy_slot(i-1,i)
+        else:
+            #向后移动
+            for i in range(src_slot, target_slot,1):
+                self.copy_slot(i+1,i)
+        self.set_slot(target_slot,src_record_offset,src_record_len)
 
     def insert_shift(self, slot: int, record_length: int):
         """
@@ -1058,7 +1089,14 @@ class CommonPage(BasePage):
                 return offset,record_length,i,record_header
         return None,None,None,None
 
-
+    def insert_slot(self, row: Row, slot: int, record_id: int | None = None):
+        #插入尾部
+        page_num,record_id = self.insert_to_last_slot(row,record_id)
+        if page_num == -1:
+            return -1,-1
+        #调整slot的位置
+        #交换slot位置
+        self.move_and_insert_slot(self.slot_num - 1,slot)
 
     def insert_to_last_slot(self, row: Row,record_id:int|None = None)->Tuple[int,int]:
         """
@@ -1107,7 +1145,7 @@ class CommonPage(BasePage):
                     #写入数据部分
                     struct.pack_into('<bi',self.page_data,field_write_offset,FIELD_NOT_OVER_FLOW,field_length)
                     field_write_offset+= CommonPage.field_header_length()
-                    self.page_data[field_write_offset:field_write_offset+field_length] = value.bytes_content
+                    self.page_data[field_write_offset:field_write_offset+field_length] = value.get_bytes()
                     field_write_offset+=  field_length
                     free_space -= CommonPage.field_header_length() + field_length
                 #当页不能写完,只能写入一部分,剩下的需要over flow
@@ -1116,14 +1154,14 @@ class CommonPage(BasePage):
                     if free_space< CommonPage.field_header_length()+ CommonPage.over_flow_field_data_size():
                         break
                     #当页可以写入的长度
-                    cur_page_len = free_space - CommonPage.field_header_length()+ CommonPage.over_flow_field_data_size()
+                    cur_page_len = free_space - CommonPage.field_header_length() -  CommonPage.over_flow_field_data_size()
                     #剩余部分写入over flow page
-                    generate_row([value.get_bytes()[cur_page_len:]])
+                    new_row = generate_row([value.get_bytes()[cur_page_len:]])
                     over_page=self.get_over_flow_page(CommonPage.record_min_size())
-                    over_page_num,over_page_record_id = over_page.insert_to_last_slot(row)
+                    over_page_num,over_page_record_id = over_page.insert_to_last_slot(new_row)
                     struct.pack_into('<biii',self.page_data,field_write_offset,FIELD_OVER_FLOW,cur_page_len,over_page_num,over_page_record_id)
                     field_write_offset+= CommonPage.field_header_length()
-                    self.page_data[field_write_offset:field_write_offset+cur_page_len] = value.bytes_content[0:cur_page_len]
+                    self.page_data[field_write_offset:field_write_offset+cur_page_len] = value.get_bytes()[0:cur_page_len]
                     field_write_offset+= field_length
                     free_space -= CommonPage.field_header_length() + field_length
             cols+=1
@@ -1131,7 +1169,7 @@ class CommonPage(BasePage):
         if cols < len(row.values):
             status = MULTI_PAGE
             over_page = self.get_over_flow_page(CommonPage.record_min_size())
-            over_page_num,over_page_record_id = over_page.insert_to_last_slot(generate_row(row.sub_row(cols)))
+            over_page_num,over_page_record_id = over_page.insert_to_last_slot(row.sub_row(cols))
             struct.pack_into('<biiii', self.page_data, record_offset_start, status, record_id, cols, over_page_num,
                              over_page_record_id)
         else:
