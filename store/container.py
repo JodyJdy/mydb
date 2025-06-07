@@ -24,7 +24,7 @@ class Extent:
         self.dirty = dirty
 
     def has_new_page(self):
-        return not self.last == self.first + self.length
+        return  self.last < self.first + self.length
 
     def free_page(self, page_num: int):
         self.set_page_status(page_num, Extent.PAGE_NOT_USE)
@@ -37,9 +37,9 @@ class Extent:
             return Extent.INVALID_PAGE_NUMBER
         # 检查有无空闲
         i = 0
-        while i < self.last:
+        while i < self.last - self.first:
             if self.free_status[i] == Extent.PAGE_NOT_USE:
-                self.set_page_status(i + self.first, Extent.PAGE_USED)
+                self.set_page_status(i, Extent.PAGE_USED)
                 return i
             i += 1
         # 重新创建
@@ -158,9 +158,10 @@ class ContainerAlloc:
         i = 0
         while i <= self.extent_num:
             extent = self.get_extent(self.extent_num)
-            page_num = extent.alloc_page()
-            if not page_num == Extent.INVALID_PAGE_NUMBER:
-                return page_num
+            if extent.has_new_page():
+                page_num = extent.alloc_page()
+                if not page_num == Extent.INVALID_PAGE_NUMBER:
+                    return page_num
             i = i + 1
         # 无空闲页
         return self.alloc_new()

@@ -43,6 +43,10 @@ class BasePage:
         self.next_id = 0
 
 
+    def increase_slot_num(self):
+        self.slot_num+=1
+        self.sync()
+
     def sync(self):
         """
         状态同步到 page_data中
@@ -1029,6 +1033,10 @@ class CommonPage(BasePage):
         return 1 + 4 + 4
 
     @staticmethod
+    def over_flow_field_header():
+        return CommonPage.field_header_length() + CommonPage.over_flow_field_data_size()
+
+    @staticmethod
     def field_header_length():
         """
          status fieldLength
@@ -1098,6 +1106,94 @@ class CommonPage(BasePage):
         #交换slot位置
         self.move_and_insert_slot(self.slot_num - 1,slot)
 
+    def write_long_field(self,field:Value,write_from,over_record_id:int,page:BasePage):
+        cur_record_id = over_record_id
+        cur_page = page
+        field_bytes = field.get_bytes()
+        field_size= len(field_bytes)
+        #每次都尝试把页写满
+        while write_from < field_size:
+            free_space = cur_page.cal_free_space()
+            #还需要写的数据长度
+            field_length = field_size - write_from
+            #获取写入数据的
+            record_offset_start = cur_page.header_records_length(free_space)
+            slot_offset_start =  cal_slot_entry_offset(cur_page.slot_num)
+            #调整可用空间
+            free_space -= CommonPage.record_min_size()
+            #写入field的位置
+            field_write_offset = record_offset_start + cur_page.record_header_size()
+            #写入field
+            # 1. 本次可以完全写完
+            if field_length + CommonPage.field_header_length() <= free_space:
+                #写入数据部分
+                struct.pack_into('<bi',cur_page.page_data,field_write_offset,FIELD_NOT_OVER_FLOW,field_length)
+                cur_page.page_data[field_write_offset + CommonPage.field_header_length():field_write_offset+CommonPage.field_header_length()+field_length] = field.get_bytes()[write_from:]
+                #写入 record header
+                struct.pack_into('<biiii', cur_page.page_data, record_offset_start, SINGLE_PAGE, cur_record_id, 1, -1,
+                                 -1)
+                #写入 slot table
+                struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset+CommonPage.field_header_length()+field_length - record_offset_start)
+                write_from+=field_length
+                page.increase_slot_num()
+                break
+            #写多次
+            else:
+                cur_page_len= free_space - CommonPage.over_flow_field_header()
+                over_page=cur_page.get_over_flow_page(CommonPage.record_min_size() + CommonPage.field_header_length()+ min(cur_page_len,10))
+                over_page_record_id = over_page.get_next_record_id()
+                struct.pack_into('<biii',cur_page.page_data,field_write_offset,FIELD_OVER_FLOW,cur_page_len,over_page.page_num,over_page_record_id)
+                cur_page.page_data[field_write_offset+CommonPage.over_flow_field_header():CommonPage.over_flow_field_header()+field_write_offset+cur_page_len] = field.get_bytes()[write_from:write_from+cur_page_len]
+                write_from+=cur_page_len
+                #写入 slot table
+                struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset+CommonPage.over_flow_field_header()+cur_page_len - record_offset_start)
+                cur_page.increase_slot_num()
+                #多的写入下一页
+                cur_page = over_page
+                cur_record_id = over_record_id
+
+
+    def write_field(self,field:Value,page,free_space:int,write_offset:int):
+        """
+        """
+        status = get_value_status(field)
+        if field.is_null:
+            #预留一个 over flow的空间
+            if field.len_variable():
+                field_length =  CommonPage.over_flow_field_data_size()
+            else:
+                field_length = field.space_use()
+            if field_length + CommonPage.field_header_length() > free_space:
+                return -1
+            #可以写入
+            struct.pack_into('<bi',page.page_data,write_offset,status,field_length)
+            return CommonPage.field_header_length() + field_length
+        else:
+            field_length = field.space_use()
+            #当页全部放得下
+            if field_length + CommonPage.field_header_length() <= free_space:
+                #写入数据部分
+                struct.pack_into('<bi',page.page_data,write_offset,FIELD_NOT_OVER_FLOW,field_length)
+                page.page_data[write_offset + CommonPage.field_header_length():write_offset+CommonPage.field_header_length()+field_length] = field.get_bytes()
+                return CommonPage.field_header_length() + field_length
+            #当页不能写完,只能写入一部分,剩下的需要over flow
+            else:
+                #连over flow空间都没有，直接结束
+                if free_space< CommonPage.over_flow_field_header():
+                    return -1
+                #当页可以写入的长度
+                cur_page_len = free_space - CommonPage.over_flow_field_header()
+                #新开辟的页，最少也要有写入一个field的空间
+                over_page=page.get_over_flow_page(CommonPage.record_min_size() + CommonPage.field_header_length()+ min(cur_page_len,10))
+                over_page_record_id = over_page.get_next_record_id()
+                struct.pack_into('<biii',self.page_data,write_offset,FIELD_OVER_FLOW,cur_page_len,over_page.page_num,over_page_record_id)
+                self.page_data[write_offset+CommonPage.over_flow_field_header():CommonPage.over_flow_field_header()+write_offset+cur_page_len] = field.get_bytes()[0:cur_page_len]
+                #剩余的写入over_page
+                self.write_long_field(field,cur_page_len,over_page_record_id,over_page)
+                # fielder header + over flow信息 + 当页写入信息
+                return cur_page_len + CommonPage.over_flow_field_header()
+
+
     def insert_to_last_slot(self, row: Row,record_id:int|None = None)->Tuple[int,int]:
         """
         返回插入的  record id 和 page num
@@ -1107,81 +1203,53 @@ class CommonPage(BasePage):
         :return:
         """
         if not record_id:
-            record_id = self.get_next_record_id()
-        #可用空间
-        free_space = self.cal_free_space()
-        # 不够写入header信息
-        if free_space <  CommonPage.record_min_size():
-            return -1,-1
-        #获取写入数据的
-        record_offset_start = self.header_records_length(free_space)
-
-        slot_offset_start =  cal_slot_entry_offset(self.slot_num)
-        #调整可用空间
-        free_space-= CommonPage.record_min_size()
-        #写入field的位置
-        field_write_offset = record_offset_start + self.record_header_size()
-        #逐个field的写入
-        cols = 0
-        while cols < len(row.values):
-            value = row.values[cols]
-            status = get_value_status(value)
-
-            if value.is_null:
-                if value.len_variable():
-                    field_length =  CommonPage.over_flow_field_data_size()
-                else:
-                    field_length = value.space_use()
-                if field_length + CommonPage.field_header_length() > free_space:
-                    break
-                #可以写入
-                struct.pack_into('<bi',self.page_data,field_write_offset,status,field_length)
-                field_write_offset+= CommonPage.field_header_length() + field_length
-                free_space -= CommonPage.field_header_length() + field_length
-            else:
-                field_length = value.space_use()
-                #当页全部放得下
-                if field_length + CommonPage.field_header_length() <= free_space:
-                    #写入数据部分
-                    struct.pack_into('<bi',self.page_data,field_write_offset,FIELD_NOT_OVER_FLOW,field_length)
-                    field_write_offset+= CommonPage.field_header_length()
-                    self.page_data[field_write_offset:field_write_offset+field_length] = value.get_bytes()
-                    field_write_offset+=  field_length
-                    free_space -= CommonPage.field_header_length() + field_length
-                #当页不能写完,只能写入一部分,剩下的需要over flow
-                else:
-                    #连over flow空间都没有，直接结束
-                    if free_space< CommonPage.field_header_length()+ CommonPage.over_flow_field_data_size():
-                        break
-                    #当页可以写入的长度
-                    cur_page_len = free_space - CommonPage.field_header_length() -  CommonPage.over_flow_field_data_size()
-                    #剩余部分写入over flow page
-                    new_row = generate_row([value.get_bytes()[cur_page_len:]])
-                    over_page=self.get_over_flow_page(CommonPage.record_min_size())
-                    over_page_num,over_page_record_id = over_page.insert_to_last_slot(new_row)
-                    struct.pack_into('<biii',self.page_data,field_write_offset,FIELD_OVER_FLOW,cur_page_len,over_page_num,over_page_record_id)
-                    field_write_offset+= CommonPage.field_header_length()
-                    self.page_data[field_write_offset:field_write_offset+cur_page_len] = value.get_bytes()[0:cur_page_len]
-                    field_write_offset+= field_length
-                    free_space -= CommonPage.field_header_length() + field_length
-            cols+=1
-
-        if cols < len(row.values):
-            status = MULTI_PAGE
-            over_page = self.get_over_flow_page(CommonPage.record_min_size())
-            over_page_num,over_page_record_id = over_page.insert_to_last_slot(row.sub_row(cols))
-            struct.pack_into('<biiii', self.page_data, record_offset_start, status, record_id, cols, over_page_num,
-                             over_page_record_id)
+            record_id = cur_record_id = self.get_next_record_id()
         else:
-            status = SINGLE_PAGE
-            struct.pack_into('<biiii', self.page_data, record_offset_start, status, record_id, cols, -1,
-                         -1)
-        #写入尾部信息
-        # 写入 slot table
-        struct.pack_into('<ii', self.page_data, slot_offset_start, record_offset_start,field_write_offset - record_offset_start)
-        self.slot_num+=1
-        #把在当页的写入
-        self.sync()
+            cur_record_id = record_id
+        cur_page = self
+        #逐个field的写入
+        wrote_cols = 0
+        while wrote_cols < len(row.values):
+            #可用空间
+            free_space = cur_page.cal_free_space()
+            # 不够写入header信息
+            if free_space <  CommonPage.record_min_size():
+                return -1,-1
+            #获取写入数据的
+            record_offset_start = cur_page.header_records_length(free_space)
+
+            slot_offset_start =  cal_slot_entry_offset(cur_page.slot_num)
+            #调整可用空间
+            free_space-= CommonPage.record_min_size()
+            #写入field的位置
+            field_write_offset = record_offset_start + cur_page.record_header_size()
+            step_wrote_cols = 0
+            while wrote_cols + step_wrote_cols < len(row.values):
+                value = row.values[wrote_cols+step_wrote_cols]
+                write_len = cur_page.write_field(value,cur_page,free_space,field_write_offset)
+                if write_len == -1:
+                    break
+                free_space -= write_len
+                field_write_offset+=write_len
+                step_wrote_cols+=1
+            print(f'page:{cur_page.page_num},cols:{step_wrote_cols}')
+            #当页写完
+            if wrote_cols +step_wrote_cols < len(row.values):
+                over_page = cur_page.get_over_flow_page(CommonPage.record_min_size())
+                over_record_id = over_page.get_next_record_id()
+                struct.pack_into('<biiii', cur_page.page_data, record_offset_start, MULTI_PAGE, cur_record_id, step_wrote_cols, over_page.page_num,
+                                 over_record_id)
+                struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset - record_offset_start)
+                cur_page.increase_slot_num()
+                cur_record_id = over_record_id
+                cur_page = over_page
+            else:
+                cur_page.increase_slot_num()
+                struct.pack_into('<biiii', cur_page.page_data, record_offset_start, SINGLE_PAGE, cur_record_id, step_wrote_cols, -1,
+                                 -1)
+                struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset - record_offset_start)
+            wrote_cols+=step_wrote_cols
+
         return record_id,self.page_num
 
     def set_field_null(self,field:Field):
