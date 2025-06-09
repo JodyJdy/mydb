@@ -1325,6 +1325,7 @@ class CommonPage(BasePage):
             cur_page_num,cur_record_id = wait_deleted.pop(0)
             if (cur_page_num,record_id) in deleted:
                 continue
+            print(f'delete: {cur_page_num} {cur_record_id}')
             deleted.append((cur_page_num,cur_record_id))
             cur_page = self.container.get_page(cur_page_num)
             record_offset,record_length,slot,record_header =  cur_page.read_record_header_by_record_id(cur_record_id)
@@ -1338,8 +1339,8 @@ class CommonPage(BasePage):
                 if  status == FIELD_OVER_FLOW:
                     #跳过数据部分
                     next_page_num,next_record_id = struct.unpack_from('<ii',cur_page.page_data,field_offset)
-                    next_page:CommonPage = cur_page.container.get_page(next_page_num)
-                    next_page.delete_by_record_id(next_record_id)
+                    if  not (next_page_num,next_record_id) in wait_deleted:
+                        wait_deleted.append((next_page_num,next_record_id))
                     field_offset += field_length
                     field_offset += 4 + 4
                 else:
@@ -1349,5 +1350,5 @@ class CommonPage(BasePage):
             #删除slot,将被删除的slot移除到最后的位置
             cur_page.move_and_insert_slot(slot,cur_page.slot_num - 1)
             cur_page.decrease_slot_num()
-            if not record_header.next_page_num == -1:
+            if not record_header.next_page_num == -1 and not (record_header.next_page_num,record_header.next_record_id) in wait_deleted:
                 wait_deleted.append((record_header.next_page_num,record_header.next_record_id))
