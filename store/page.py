@@ -16,7 +16,6 @@ SLOT_TABLE_ENTRY_SIZE = 4 + 4
 """
 OVER_FLOW_PAGE = 1
 NORMAL_PAGE = 0
-COMMON_PAGE = 2
 
 
 
@@ -42,9 +41,15 @@ class BasePage:
         self.slot_num = 0
         self.next_id = 0
 
+    def is_over_flow(self)->bool:
+        pass
+
 
     def increase_slot_num(self):
         self.slot_num+=1
+        self.sync()
+    def decrease_slot_num(self):
+        self.slot_num-=1
         self.sync()
 
     def sync(self):
@@ -106,7 +111,7 @@ class BasePage:
         record_id = self.next_id
         self.next_id += 1
         return record_id
-    def init_page(self):
+    def init_page(self,is_over_flow:bool=  False):
         """新创建页面时，需要初始化"""
         pass
     def read_slot_entry(self, slot) -> Tuple[int, int]:
@@ -134,11 +139,18 @@ class BasePage:
 
     def shrink(self, offset_start:int, shrink_bytes:int):
         """
-        只shrink byte，不调整 slot table,以及 record中的长度信息
+        shrink byte，并调整 slot table,以及 record中的长度信息
         :param offset_start: 移动byte的起始位置
         :param shrink_bytes: 移动字节数， 如果 >0 向后移动, 页面可用空间减少
         :return:
         """
+        #获取offset_start之后的所有slot
+        shrink_slot = []
+        for i in range(self.slot_num):
+            record_offset,record_len = self.read_slot_entry(i)
+            if record_offset >= offset_start:
+                #记录slot num 并调整record偏移
+                shrink_slot.append((i,record_offset+shrink_bytes))
         free_space = self.cal_free_space()
         if shrink_bytes > 0 and free_space < shrink_bytes:
             raise Exception('page溢出')
@@ -147,6 +159,10 @@ class BasePage:
         content_len = self.header_records_length(free_space)
         self.page_data[offset_start + shrink_bytes:content_len + shrink_bytes] = \
             self.page_data[offset_start:content_len]
+
+        #调整slot的偏移量
+        for slot,record_offset in shrink_slot:
+            self.set_slot_record_offset(slot,record_offset)
 
     def adjust_slot_record_length(self,slot:int,adjust:int):
         """
@@ -242,6 +258,16 @@ class BasePage:
         struct.pack_into("<ii",self.page_data,cal_slot_entry_offset(target_slot),record_offset,record_len)
     def set_slot(self,slot:int,record_offset:int,record_len:int):
         struct.pack_into("<ii",self.page_data,cal_slot_entry_offset(slot),record_offset,record_len)
+    def set_slot_record_offset(self,slot:int,record_offset:int):
+        struct.pack_into("<i",self.page_data,cal_slot_entry_offset(slot),record_offset)
+
+    def search_slot_by_record_offset(self,offset:int):
+        for i in range(self.slot_num):
+            record_offset,record_len =self.read_slot_entry(i)
+            if record_offset == offset:
+                return i
+        return -1
+
 
     def move_and_insert_slot(self,src_slot:int,target_slot:int):
         """
@@ -566,7 +592,7 @@ def cal_space_use(value:Value)->int:
         space_use+=1 + 4 + value.space_use()
     return space_use
 
-class StorePageRecorderHeader:
+class CommonPageRecordHeader:
     def __init__(self, status:int, record_id:int, col_num:int, next_page_num:int, next_record_id:int):
         self.status = status
         self.record_id = record_id
@@ -595,7 +621,7 @@ class Field:
            return f'value:{self.value}'
 
 class Record:
-    def __init__(self,header:StorePageRecorderHeader,fields:List[Field]):
+    def __init__(self, header:CommonPageRecordHeader, fields:List[Field]):
         self.header = header
         self.fields = fields
     def __repr__(self):
@@ -726,11 +752,11 @@ class StoredPage(BasePage):
             self.over_flow_page_num = over_page.page_num
         return over_page
 
-    def read_record_header_by_slot(self,slot:int)->Tuple[int,int,StorePageRecorderHeader]:
+    def read_record_header_by_slot(self,slot:int)->Tuple[int,int,CommonPageRecordHeader]:
         offset, record_length = self.read_slot_entry(slot)
-        return offset,record_length,StorePageRecorderHeader(*struct.unpack_from('<biiii', self.page_data, offset))
+        return offset,record_length,CommonPageRecordHeader(*struct.unpack_from('<biiii', self.page_data, offset))
 
-    def read_record_header_by_record_id(self,record_id:int)->Tuple[None|int,None|int,None|int,None|StorePageRecorderHeader]:
+    def read_record_header_by_record_id(self,record_id:int)->Tuple[None | int, None | int, None | int, None | CommonPageRecordHeader]:
         """
         返回 记录偏移，记录长度 slot record_header
 
@@ -817,7 +843,7 @@ class StoredPage(BasePage):
             next_page.insert_to_last_slot(over_flow_row(row_data[data_length+StoredPage.record_min_size():]))
         return record_id,self.page_num
 
-    def parse_record(self,row_data:bytearray, header:StorePageRecorderHeader)->Record:
+    def parse_record(self, row_data:bytearray, header:CommonPageRecordHeader)->Record:
         fields = []
         #在 row_data里面的偏移量
         offset = 0
@@ -1026,11 +1052,11 @@ class CommonPage(BasePage):
         super().__init__(page_num, page_data)
         self.page_type,self.slot_num,self.next_id,self.over_flow_page_num = struct.unpack_from('<biii', self.page_data, 0)
     def sync(self):
-        struct.pack_into('<biii', self.page_data, 0, COMMON_PAGE, self.slot_num, self.next_id, self.over_flow_page_num)
+        struct.pack_into('<biii', self.page_data, 0, self.page_type, self.slot_num, self.next_id, self.over_flow_page_num)
         self.dirty = True
 
     def header_size(self) -> int:
-        return 1 + 4 + 4
+        return 1 + 4 + 4 + 4
 
     @staticmethod
     def over_flow_field_header():
@@ -1073,20 +1099,20 @@ class CommonPage(BasePage):
 
     def get_over_flow_page(self,min_space:int|None = None):
         if self.over_flow_page_num == -1:
-            over_page:OverFlowPage = self.container.new_common_page()
+            over_page = self.container.new_common_page(is_over_flow=True)
             self.over_flow_page_num = over_page.page_num
         else:
-            over_page:OverFlowPage = self.container.get_page(self.over_flow_page_num)
+            over_page = self.container.get_page(self.over_flow_page_num)
         if min_space and over_page.cal_free_space()<min_space:
-            over_page:OverFlowPage = self.container.new_common_page()
+            over_page = self.container.new_common_page(is_over_flow=True)
             self.over_flow_page_num = over_page.page_num
         return over_page
 
-    def read_record_header_by_slot(self,slot:int)->Tuple[int,int,StorePageRecorderHeader]:
+    def read_record_header_by_slot(self,slot:int)->Tuple[int,int,CommonPageRecordHeader]:
         offset, record_length = self.read_slot_entry(slot)
-        return offset,record_length,StorePageRecorderHeader(*struct.unpack_from('<biiii', self.page_data, offset))
+        return offset,record_length,CommonPageRecordHeader(*struct.unpack_from('<biiii', self.page_data, offset))
 
-    def read_record_header_by_record_id(self,record_id:int)->Tuple[None|int,None|int,None|int,None|StorePageRecorderHeader]:
+    def read_record_header_by_record_id(self,record_id:int)->Tuple[None | int, None | int, None | int, None | CommonPageRecordHeader]:
         """
         返回 记录偏移，记录长度 slot record_header
 
@@ -1135,7 +1161,7 @@ class CommonPage(BasePage):
                 #写入 slot table
                 struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset+CommonPage.field_header_length()+field_length - record_offset_start)
                 write_from+=field_length
-                page.increase_slot_num()
+                cur_page.increase_slot_num()
                 break
             #写多次
             else:
@@ -1145,6 +1171,8 @@ class CommonPage(BasePage):
                 struct.pack_into('<biii',cur_page.page_data,field_write_offset,FIELD_OVER_FLOW,cur_page_len,over_page.page_num,over_page_record_id)
                 cur_page.page_data[field_write_offset+CommonPage.over_flow_field_header():CommonPage.over_flow_field_header()+field_write_offset+cur_page_len] = field.get_bytes()[write_from:write_from+cur_page_len]
                 write_from+=cur_page_len
+                #写入 record header
+                struct.pack_into('<biiii', cur_page.page_data, record_offset_start, MULTI_PAGE, cur_record_id, 1, over_page.page_num,over_page_record_id)
                 #写入 slot table
                 struct.pack_into('<ii', cur_page.page_data, slot_offset_start, record_offset_start,field_write_offset+CommonPage.over_flow_field_header()+cur_page_len - record_offset_start)
                 cur_page.increase_slot_num()
@@ -1270,9 +1298,56 @@ class CommonPage(BasePage):
     def set_over_flow_field(self,field:Field,over_flow_page_num:int,over_flow_record:int):
         struct.pack_into('<bii',self.page_data,field.offset,FIELD_OVER_FLOW,over_flow_page_num,over_flow_record)
 
-    def init_page(self):
+    def is_over_flow(self) -> bool:
+        return self.page_type == OVER_FLOW_PAGE
+
+    def init_page(self,is_over_flow:bool=False):
         """
         写入头部信息
         """
-        struct.pack_into('<biii', self.page_data, 0, COMMON_PAGE, 0, 0,-1)
+        if is_over_flow:
+            struct.pack_into('<biii', self.page_data, 0, OVER_FLOW_PAGE, 0, 0,-1)
+        else:
+            struct.pack_into('<biii', self.page_data, 0, NORMAL_PAGE, 0, 0,-1)
         self.over_flow_page_num = -1
+
+
+    def delete_by_record_id(self, record_id: int):
+        self._delete_record_id(record_id)
+
+    def _delete_record_id(self,record_id:int):
+        """
+        :return:
+        """
+        deleted = []
+        wait_deleted = [(self.page_num,record_id)]
+        while len(wait_deleted) >0:
+            cur_page_num,cur_record_id = wait_deleted.pop(0)
+            if (cur_page_num,record_id) in deleted:
+                continue
+            deleted.append((cur_page_num,cur_record_id))
+            cur_page = self.container.get_page(cur_page_num)
+            record_offset,record_length,slot,record_header =  cur_page.read_record_header_by_record_id(cur_record_id)
+            if record_offset is None:
+                return
+            #读取field
+            field_offset = record_offset+ cur_page.record_header_size()
+            for i in range(record_header.col_num):
+                status,field_length = struct.unpack_from('<bi',cur_page.page_data,field_offset)
+                field_offset += cur_page.field_header_length()
+                if  status == FIELD_OVER_FLOW:
+                    #跳过数据部分
+                    next_page_num,next_record_id = struct.unpack_from('<ii',cur_page.page_data,field_offset)
+                    next_page:CommonPage = cur_page.container.get_page(next_page_num)
+                    next_page.delete_by_record_id(next_record_id)
+                    field_offset += field_length
+                    field_offset += 4 + 4
+                else:
+                    field_offset += field_length
+            #需要调整偏移量
+            cur_page.shrink(record_offset+record_length,-record_length)
+            #删除slot,将被删除的slot移除到最后的位置
+            cur_page.move_and_insert_slot(slot,cur_page.slot_num - 1)
+            cur_page.decrease_slot_num()
+            if not record_header.next_page_num == -1:
+                wait_deleted.append((record_header.next_page_num,record_header.next_record_id))
