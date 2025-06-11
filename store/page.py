@@ -141,6 +141,8 @@ class BasePage:
         :param shrink_bytes: 移动字节数， 如果 >0 向后移动, 页面可用空间减少
         :return:
         """
+        if shrink_bytes == 0:
+            return
         #获取offset_start之后的所有slot
         shrink_slot = []
         for i in range(self.slot_num):
@@ -390,12 +392,13 @@ class CommonPageRecordHeader:
     def __repr__(self):
         return f'status={self.status},record_id={self.record_id},col_num={self.col_num},next_page_num={self.next_page_num},next_record_id={self.next_record_id}'
 class Field:
-   def __init__(self,status:int,page_num:int,offset:int):
+   def __init__(self,status:int,page_num:int,offset:int,field_length:int):
        self.status = status
        #字段所处的page
        self.page_num = page_num
        #字段的偏移
        self.offset = offset
+       self.field_length = field_length
        self.value = bytearray()
        self.over_flow_page = None
        self.over_flow_record = None
@@ -433,7 +436,7 @@ class CommonPage(BasePage):
       over_flow_page number 4
       over_flow_page id 4
       field1,field2,field3 ....
-    field结构:
+    field结构:  fieldLength 表示 field在当页的数据部分的长度， 和slot table中的 record length含义不一样
         status: 1  字段状态
         如果不over，flow:
         fieldLength 4 fieldData
@@ -750,10 +753,96 @@ class CommonPage(BasePage):
                 cur_page = self.container.get_page(temp_next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
 
+    def read_field_by_index(self,record_id:int,field_index:int):
+        """
+        读取field的偏移，不读取数据
+        """
+        cur_slot = self.get_slot_num_by_record_id(record_id)
+        cur_page = self
+        record_offset,_,record_header =  cur_page.read_record_header_by_slot(cur_slot)
+        index = 0
+        while True :
+            #读取field
+            field_offset = record_offset+ cur_page.record_header_size()
+            #在当前页，进行读取
+            if index + record_header.col_num > field_index:
+                for i in range(record_header.col_num):
+                    status,field_length = struct.unpack_from('<bi',cur_page.page_data,field_offset)
+                    field = Field(status,cur_page.page_num,field_offset,field_length)
+                    field_offset += cur_page.field_header_length()
+                    if status == FIELD_OVER_FLOW:
+                        next_page_num,next_record_id = struct.unpack_from('<ii',cur_page.page_data,field_offset)
+                        field.over_flow_page_num = next_page_num
+                        field.over_flow_record = next_record_id
+                        #跳过over flow部分
+                        field_offset += self.over_flow_field_data_size()
+                        field_offset += field_length
+                    else:
+                        field_offset += field_length
+                    #读取到field头部
+                    if index + i == field_index:
+                        return field
+            #读取下一页
+            index+=record_header.col_num
+            #读取下一页
+            if not record_header.next_page_num == -1:
+                cur_page=  self.container.get_page(record_header.next_page_num)
+                cur_slot = cur_page.get_slot_num_by_record_id(record_header.next_record_id)
+                record_offset,_,record_header =  cur_page.read_record_header_by_slot(cur_slot)
+            else:
+                break
     def update_field_by_index(self,record_id:int,field_index:int,value:Value):
+        field = self.read_field_by_index(record_id,field_index)
+        self.update_field(field, value)
+
+    def update_long_field(self,value:Value,write_from:int,field:Field):
+        """
+        这里的field是 value的内容需要继续写入的field
+        :param value:
+        :param write_from:
+        :param field:
+        :return:
+        """
         pass
+
     def update_field(self,field:Field,value:Value):
-        pass
+        page = self.container.get_page(field.page_num)
+        space_use = value.space_use()
+        if field.is_null():
+            if value == None:
+                return
+            #预留了over_flow的空间，直接写入
+            if value.len_variable():
+                over_flow_page = self.get_over_flow_page(CommonPage.record_min_size() + CommonPage.over_flow_field_header())
+                over_flow_record_id = over_flow_page.get_next_record_id()
+                struct.pack_into('<biii',page.page_data,field.offset,FIELD_OVER_FLOW,0,over_flow_page,over_flow_record_id)
+                self.write_long_field(value,0,over_flow_record_id,over_flow_page)
+            #长度固定，直接写数据
+            else:
+                page.page_data[field.offset:field.offset+space_use] = value.get_bytes()
+            return
+        if value is None:
+            #如果是over flow需要将当页的数据删掉，这里使用了shrink ，将 field_length的数据覆盖住
+            if field.status == FIELD_OVER_FLOW:
+                self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),-field.field_length)
+                #删除后续数据
+                over_flow_page:CommonPage = self.container.get_page(field.over_flow_page)
+                over_flow_page.delete_by_record_id(field.over_flow_record)
+                struct.pack_into('<b',page.page_data,field.offset,FIELD_OVER_FLOW_NULL)
+            else:
+                struct.pack_into('<b',page.page_data,field.offset,FIELD_NOT_OVER_FLOW_NULL)
+            return
+
+        # 所有值为空的情况都已经处理
+        #可以在当页放下
+        if space_use <= field.field_length:
+            page.page_data[field.offset:field.offset+space_use] = value.get_bytes()
+            if field.status == FIELD_OVER_FLOW:
+                struct.pack_into('<biii',page.page_data,field.offset,FIELD_NOT_OVER_FLOW,space_use,-1,-1)
+                self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),-field.field_length)
+            else:
+                pass
+
     def read_slot(self, slot: int) ->Record:
         cur_slot = slot
         cur_page = self
@@ -765,11 +854,11 @@ class CommonPage(BasePage):
             field_offset = record_offset+ cur_page.record_header_size()
             for i in range(record_header.col_num):
                 status,field_length = struct.unpack_from('<bi',cur_page.page_data,field_offset)
-                field = Field(status,cur_page.page_num,field_offset)
+                field = Field(status,cur_page.page_num,field_offset,field_length)
                 fields_list.append(field)
                 field_offset += cur_page.field_header_length()
                 if status == FIELD_OVER_FLOW_NULL or status == FIELD_NOT_OVER_FLOW_NULL:
-                    pass
+                    field_offset += field_length
                 elif  status == FIELD_NOT_OVER_FLOW:
                     #读取数据
                     field.value.extend(cur_page.page_data[field_offset:field_offset+field_length])
