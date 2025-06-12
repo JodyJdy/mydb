@@ -243,15 +243,6 @@ class Container:
         self.cache[page_num] = page
         return page
 
-    def new_over_flow_page(self):
-        from page import OverFlowPage
-        page_data = bytearray(config.PAGE_SIZE)
-        page_num = self.alloc.alloc()
-        page = OverFlowPage(page_num, page_data)
-        page.set_container(self)
-        page.init_page()
-        self.cache[page_num] = page
-        return page
     def new_common_page(self,is_over_flow:bool = False):
         from page import CommonPage
         page_data = bytearray(config.PAGE_SIZE)
@@ -259,26 +250,13 @@ class Container:
         page = CommonPage(page_num, page_data)
         page.set_container(self)
         if is_over_flow:
-            page.init_page(True)
+            page.init_page(is_over_flow=True)
         else:
-            page.init_page(False)
+            page.init_page(is_over_flow=False)
         self.cache[page_num] = page
         return page
 
 
-    def new_page(self):
-        from page import StoredPage
-        """
-        新创建需要初始化
-        :return:
-        """
-        page_data = bytearray(config.PAGE_SIZE)
-        page_num = self.alloc.alloc()
-        page = StoredPage(page_num, page_data)
-        page.set_container(self)
-        page.init_page()
-        self.cache[page_num] = page
-        return page
 
     def close(self):
         self.alloc.close()

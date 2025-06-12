@@ -60,10 +60,15 @@ class ByteArray(Value):
         return ByteArray(value)
 
 class StrValue(Value):
-    def __init__(self,value:str):
+
+    def __init__(self,value:str|None):
         super().__init__()
         self.value = value
         self.is_null = value is None
+
+    @staticmethod
+    def none_string():
+        return StrValue(None)
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
@@ -114,6 +119,9 @@ class ShortValue(Value):
         self.is_null = is_null
         if not is_null:
             self.bytes_content = int_to_bytes(value,2)
+    @staticmethod
+    def none_short():
+        return ShortValue(None,is_null=True)
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
@@ -121,7 +129,6 @@ class ShortValue(Value):
 
     def __repr__(self):
         return f"short:{self.value}"
-
 
 class IntValue(Value):
     """
@@ -140,6 +147,9 @@ class IntValue(Value):
         if not is_null:
             self.bytes_content = int_to_bytes(value,4)
 
+    @staticmethod
+    def none_int():
+        return IntValue(None,is_null=True)
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
         return IntValue(int.from_bytes(value, byteorder='little', signed=True))
@@ -169,20 +179,15 @@ class LongValue(Value):
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
         return LongValue(int.from_bytes(value, byteorder='little', signed=True))
-
+    @staticmethod
+    def none_long():
+        return LongValue(None,is_null=True)
 class Row:
     """
     一个数据行里面的索引总是出现在前几列
     """
     def __init__(self,values:List[Value]):
         self.values = values
-        self.space_use = self._space_use()
-
-    def _space_use(self):
-        use = 0
-        for value in self.values:
-            use += value.space_use()
-        return use
     def sub_row(self,start:int):
         return Row(self.values[start:])
     def __repr__(self):
@@ -237,7 +242,9 @@ def over_flow_row(v: bytearray):
 def generate_row(v:List[int|str|bytearray])->Row:
     values: List[Value] = []
     for value in v:
-        if type(value) == int:
+        if isinstance(value,Value):
+            values.append(value)
+        elif type(value) == int:
             values.append(IntValue(value))
         elif type(value) == str:
             values.append(StrValue(value))
