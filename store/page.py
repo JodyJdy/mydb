@@ -230,14 +230,6 @@ class BasePage:
         self.set_slot(target_slot, src_record_offset, src_record_len)
 
 
-class OverFlowRecordHeader:
-    def __init__(self, status: int, record_id: int, length: int, next_page_num: int, next_record_id: int):
-        self.status = status
-        self.record_id = record_id
-        self.length = length
-        self.next_page_num = next_page_num
-        self.next_record_id = next_record_id
-
 
 # record 单页存储完
 SINGLE_PAGE = 1
@@ -270,17 +262,6 @@ OVER_FLOW_FIELD_LENGTH = 4 + 4
 INCLUDE_FIELD_DATA = 0
 # 2.只读取字段的头部
 ONLY_FIELD_HEADER = 1
-
-
-def cal_space_use(value: Value) -> int:
-    space_use = 0
-    if value.len_variable():
-        # status over flow page num , record id
-        space_use += 1 + OVER_FLOW_FIELD_LENGTH
-    else:
-        # 1 + field length field data
-        space_use += 1 + 4 + value.space_use()
-    return space_use
 
 
 class CommonPageRecordHeader:
@@ -632,26 +613,6 @@ class CommonPage(BasePage):
 
         return record_id, self.page_num
 
-    def set_field_null(self, field: Field):
-        if field.status == FIELD_OVER_FLOW or field.status == FIELD_OVER_FLOW_NULL:
-            struct.pack_into('<b', self.page_data, field.offset, FIELD_OVER_FLOW_NULL)
-        else:
-            struct.pack_into('<b', self.page_data, field.offset, FIELD_NOT_OVER_FLOW_NULL)
-
-    def set_normal_field(self, field: Field, value: Value):
-        # 跳过 status fieldLength 直接写入数据
-        content = value.get_bytes()
-        data_offset = field.offset + CommonPage.field_header_length()
-        self.page_data[data_offset:data_offset + len(content)] = content
-
-    def remove_over_flow_field(self, field: Field):
-        if field.is_null():
-            return
-        page: BasePage = self.container.get_page(field.over_flow_page)
-        page.delete_by_record_id(field.over_flow_record)
-
-    def set_over_flow_field(self, field: Field, over_flow_page_num: int, over_flow_record: int):
-        struct.pack_into('<bii', self.page_data, field.offset, FIELD_OVER_FLOW, over_flow_page_num, over_flow_record)
 
     def is_over_flow(self) -> bool:
         return self.page_type == OVER_FLOW_PAGE
