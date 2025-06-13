@@ -36,6 +36,12 @@ class Value:
     def __lt__(self, other):
         return self.value < other.value
 
+    @staticmethod
+    def from_bytes(bytes: bytearray):
+        pass
+    @staticmethod
+    def none():
+        pass
     @abstractmethod
     def get_bytes(self)->bytearray:
         pass
@@ -67,7 +73,7 @@ class StrValue(Value):
         self.is_null = value is None
 
     @staticmethod
-    def none_string():
+    def none():
         return StrValue(None)
 
     @staticmethod
@@ -120,7 +126,7 @@ class ShortValue(Value):
         if not is_null:
             self.bytes_content = int_to_bytes(value,2)
     @staticmethod
-    def none_short():
+    def none():
         return ShortValue(None,is_null=True)
 
     @staticmethod
@@ -148,7 +154,7 @@ class IntValue(Value):
             self.bytes_content = int_to_bytes(value,4)
 
     @staticmethod
-    def none_int():
+    def none():
         return IntValue(None,is_null=True)
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
@@ -180,7 +186,7 @@ class LongValue(Value):
     def from_bytes(value:bytearray)->Value|None:
         return LongValue(int.from_bytes(value, byteorder='little', signed=True))
     @staticmethod
-    def none_long():
+    def none():
         return LongValue(None,is_null=True)
 class Row:
     """
@@ -251,22 +257,4 @@ def generate_row(v:List[int|str|bytearray])->Row:
         elif type(value) == bytearray:
             values.append(ByteArray(value))
     return Row(values)
-"""
- 根据类型，生成对应的值
-"""
-_value_type_dict:Dict[typing.Type[Value],Callable[[bytearray],Value]] = {
-    StrValue: StrValue.from_bytes,
-    IntValue: IntValue.from_bytes,
-    LongValue: LongValue.from_bytes,
-    ByteArray: ByteArray.from_bytes,
-}
-
-def parse_record(col_types:List[typing.Type[Value]],record)->Row:
-    from page import Record
-    values = []
-    for col_type,field in zip(col_types,record.fields):
-        values.append(_value_type_dict[col_type](field.value))
-    return Row(values)
-
-
 

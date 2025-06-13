@@ -3,7 +3,7 @@ import struct
 from typing import Tuple, List, Any
 
 import config
-from store.values import Row, ByteArray, Value, generate_row, over_flow_row
+from store.values import Row, ByteArray, Value
 
 """
 slot table entry 大小固定
@@ -25,12 +25,6 @@ def cal_slot_entry_offset(slot: int):
     :return:
     """
     return config.PAGE_SIZE - (slot + 1) * SLOT_TABLE_ENTRY_SIZE
-
-
-def get_over_flow_value(row: Row) -> bytearray:
-    if not isinstance(row.values[0], ByteArray):
-        raise TypeError('over_flow_page中只能插入bytearray')
-    return row.values[0].get_bytes()
 
 
 class BasePage:
@@ -700,7 +694,7 @@ class CommonPage(BasePage):
             # 读取下一页
             index += record_header.col_num
             # 读取下一页
-            if not record_header.next_page_num == -1:
+            if  record_header.next_page_num != -1:
                 cur_page = self.container.get_page(record_header.next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(record_header.next_record_id)
                 record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
@@ -721,7 +715,7 @@ class CommonPage(BasePage):
                 self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                             -field.field_length)
                 # 删除后续数据
-                if not field.over_flow_page == -1:
+                if  field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
                 struct.pack_into('<bi', page.page_data, field.offset, FIELD_OVER_FLOW_NULL,0)
             else:
@@ -768,7 +762,7 @@ class CommonPage(BasePage):
         field.offset + CommonPage.field_header_length():field.offset + CommonPage.field_header_length() + field.field_length] \
             = value.get_bytes()[:field.field_length]
         # 删除field over flow多余部分，重新写入
-        if not field.over_flow_page == -1:
+        if  field.over_flow_page != -1:
             self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
         over_flow_page = self.get_over_flow_page(CommonPage.record_min_size() + CommonPage.over_flow_field_header())
         over_flow_record_id = over_flow_page.get_next_record_id()
@@ -811,10 +805,10 @@ class CommonPage(BasePage):
                     # 读取数据
                     field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
                     field_offset += field_length
-                    if not next_page_num == -1:
+                    if  next_page_num != -1:
                         cur_page.read_over_flow_field(next_page_num, next_record_id, field)
             # 读取下一页
-            if not record_header.next_page_num == -1:
+            if  record_header.next_page_num != -1:
                 cur_page = self.container.get_page(record_header.next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(record_header.next_record_id)
                 record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
@@ -848,7 +842,7 @@ class CommonPage(BasePage):
                 if status == FIELD_OVER_FLOW:
                     # 跳过数据部分
                     next_page_num, next_record_id = struct.unpack_from('<ii', cur_page.page_data, field_offset)
-                    if not (next_page_num, next_record_id) in wait_deleted:
+                    if  (next_page_num, next_record_id) not in wait_deleted:
                         wait_deleted.append((next_page_num, next_record_id))
                     field_offset += field_length
                     field_offset += 4 + 4
@@ -859,6 +853,6 @@ class CommonPage(BasePage):
             # 删除slot,将被删除的slot移除到最后的位置
             cur_page.move_and_insert_slot(slot, cur_page.slot_num - 1)
             cur_page.decrease_slot_num()
-            if not record_header.next_page_num == -1 and not (record_header.next_page_num,
-                                                              record_header.next_record_id) in wait_deleted:
+            if  record_header.next_page_num != -1 and  (record_header.next_page_num,
+                                                              record_header.next_record_id) not in wait_deleted:
                 wait_deleted.append((record_header.next_page_num, record_header.next_record_id))

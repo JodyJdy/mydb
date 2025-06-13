@@ -63,7 +63,7 @@ class BTree:
         #找到一个插入的位置
         index = BTree.find_index_for_key_insert(node.keys,key)
         #校验，插入后是否溢出
-        if not len(node.keys) + 1 == FULL:
+        if  len(node.keys) + 1 != FULL:
             node.keys.insert(index,key)
             node.values.insert(index,value)
             return
@@ -115,7 +115,7 @@ class BTree:
         #需要将节点，进行插入
         node_in_parent_index = node.parent.values.index(node)
         #不满直接插入
-        if not len(node.parent.keys) + 1 == FULL:
+        if  len(node.parent.keys) + 1 != FULL:
             node.parent.keys.insert(node_in_parent_index,right_node.keys[0])
             node.parent.values.insert(node_in_parent_index+1,right_node)
             return
@@ -191,7 +191,7 @@ class BTree:
         #需要将节点，进行插入
         node_in_parent_index = node.parent.values.index(node)
         #不满直接插入
-        if not len(node.parent.keys) + 1 == FULL:
+        if  len(node.parent.keys) + 1 != FULL:
             node.parent.keys.insert(node_in_parent_index,mid_key)
             node.parent.values.insert(node_in_parent_index+1,right_node)
             return
