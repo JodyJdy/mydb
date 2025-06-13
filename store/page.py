@@ -434,6 +434,7 @@ class CommonPage(BasePage):
         # 调整slot的位置
         # 交换slot位置
         self.move_and_insert_slot(self.slot_num - 1, slot)
+        return page_num,record_id
 
     def write_long_field(self, field: Value, write_from, over_record_id: int, page: BasePage):
         cur_record_id = over_record_id
@@ -583,7 +584,6 @@ class CommonPage(BasePage):
                 free_space -= write_len
                 field_write_offset += write_len
                 step_wrote_cols += 1
-            print(f'page:{cur_page.page_num},cols:{step_wrote_cols}')
             # 当页写完
             if wrote_cols + step_wrote_cols < len(row.values):
                 over_page = cur_page.get_over_flow_page(CommonPage.record_min_size())
@@ -701,6 +701,9 @@ class CommonPage(BasePage):
             else:
                 break
 
+    def update_slot_field_by_index(self,slot:int, field_index: int, value: Value):
+        record_id = self.get_record_id_by_slot(slot)
+        self.update_field_by_index(record_id, field_index,value)
     def update_field_by_index(self, record_id: int, field_index: int, value: Value):
         field = self.read_field_by_index(record_id, field_index)
         self.update_field(field, value)
@@ -856,3 +859,33 @@ class CommonPage(BasePage):
             if  record_header.next_page_num != -1 and  (record_header.next_page_num,
                                                               record_header.next_record_id) not in wait_deleted:
                 wait_deleted.append((record_header.next_page_num, record_header.next_record_id))
+
+
+    def move_to_another_page(self,src_slot:int, dst_slot:int,another_page):
+        another_page:CommonPage
+        """不包含 dst_slot"""
+        if src_slot >= self.slot_num:
+            return
+        all_record = []
+        for i in range(src_slot,dst_slot):
+            record_offset,record_len = self.read_slot_entry(i)
+            all_record.append((record_offset,record_len))
+            free_space = another_page.cal_free_space()
+            new_record_offset_start = another_page.header_records_length(free_space)
+            new_slot_offset_start = cal_slot_entry_offset(another_page.slot_num)
+            #拷贝数据
+            another_page.page_data[new_record_offset_start:new_record_offset_start+record_len]\
+               = self.page_data[record_offset:record_offset+record_len]
+            #编辑slot table
+            struct.pack_into('<ii', another_page.page_data, new_slot_offset_start, new_record_offset_start,
+                             record_len)
+            another_page.increase_slot_num()
+        #按照偏移量调整，从尾部开始
+        all_record.sort(key=lambda x:x[0],reverse=True)
+        #移除数据
+        for record_offset,record_len in all_record:
+            self.shrink(record_offset+record_len,-record_len)
+        #移除slot
+        for i in range(dst_slot-1,src_slot-1,-1):
+            self.move_and_insert_slot(i,self.slot_num - 1)
+            self.decrease_slot_num()

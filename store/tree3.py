@@ -22,11 +22,16 @@ class BranchRow:
     def __init__(self,key:Row,child:int):
         self.key = key
         self.child = child
-    def to_row(self):
+    def to_row(self)->Row:
         result = self.key.values.copy()
         result.append(IntValue(self.child))
-        return result
+        return Row(result)
 
+def row_is_none(row:Row):
+    for value in row.values:
+        if not value.is_null:
+            return False
+    return True
 
 LEAF_NODE = 0
 BRANCH_NODE = 1
@@ -52,30 +57,58 @@ class Node:
     def get_last_row(self):
         pass
 
+    def is_root(self):
+        return self.control_row.parent == -1
+
+    def page_num(self):
+        return self.page.page_num
     def parent(self)->int:
         return self.control_row.parent
     def set_parent(self,parent:int):
         self.control_row.parent = parent
+        self.page.update_by_slot(self.control_row.to_row(),0)
     def left(self):
         return self.control_row.left
     def right(self):
         return self.control_row.right
     def set_left(self,left:int):
         self.control_row.left = left
+        self.page.update_by_slot(self.control_row.to_row(),0)
     def set_right(self,right:int):
         self.control_row.right = right
-    def sync(self):
-        """
-        同步control row
-        :return:
-        """
         self.page.update_by_slot(self.control_row.to_row(),0)
+    def get_right_node(self):
+        btree:BTree = self.tree
+        right_page_num = self.right()
+        if right_page_num != -1:
+            return btree.read_node(right_page_num)
+        return None
+    def get_parent_node(self):
+        btree:BTree = self.tree
+        parent_page_num = self.parent()
+        if parent_page_num != -1:
+            return btree.read_branch_node(parent_page_num)
+        return None
+
+    def get_left_node(self):
+        btree:BTree = self.tree
+        left_page_num = self.left()
+        if left_page_num != -1:
+            return btree.read_node(left_page_num)
+        return None
+
+
+
+    def move_to_another_node(self,src,target,other_node):
+        other_node:Node
+        self.page.move_to_another_page(src+1,target+1,other_node.page)
+
 class LeafNode(Node):
     def __init__(self,page:CommonPage):
         super().__init__(page)
 
     def __repr__(self):
-        return f'{self.rows}'
+        return f'page_num:{self.page_num()},control_row: {self.control_row}'
 
     def key_index(self, key):
         #key值相等的地方
@@ -124,6 +157,8 @@ class LeafNode(Node):
             return False
         return True
 
+
+
 class BranchNode(Node):
     def __init__(self,page:CommonPage):
         super().__init__(page)
@@ -133,18 +168,27 @@ class BranchNode(Node):
             if key == row.key:
                 return index
         return -1
-    def child_index(self,child):
-        for index,row in enumerate(self.rows):
-            if child == row.child:
-                return index
+    def child_index(self,child:int):
+        for i in range(self.row_num()):
+            row_i = self.get_row_i(i)
+            if row_i.child == child:
+                return i
         return -1
+
     def  find_index_for_key_insert(self,k):
-        for index,row in enumerate(self.rows):
-            if not row.key:
-                continue
-            if k< row.key:
-                return index
+        # 第0个key一定是none
+        for i in range(1,self.row_num()):
+            row_i = self.get_row_i(i)
+            if k <  row_i.key:
+                return i
         return self.row_num()
+
+    def set_child_parent(self):
+        btree:BTree = self.tree
+        for i in range(self.row_num()):
+            row_i = self.get_row_i(i)
+            child = btree.read_branch_node(row_i.child)
+            child.set_parent(self.page_num())
 
     def get_row_i(self, i: int)->BranchRow:
         """
@@ -159,7 +203,24 @@ class BranchNode(Node):
     def get_last_row(self):
         btree:BTree = self.tree
         return btree.parse_branch_row(self.page.read_slot(self.page.slot_num - 1))
+    def append_row(self,row:BranchRow):
+        result,_ = self.page.insert_to_last_slot(row.to_row())
+        if result == -1:
+            raise Exception('create root fail')
 
+    def update_row_i(self,i,value:BranchRow):
+        self.page.update_by_slot(value.to_row(),i+1)
+
+    def update_row_i_child(self,i,child:int):
+        btree:BTree = self.tree
+        # child是最后一个字段
+        self.page.update_slot_field_by_index(i+1,btree.key_len,IntValue(child))
+
+    def insert_row(self,i:int,value:BranchRow):
+        result,_ = self.page.insert_slot(value.to_row(),i+1)
+        if result == -1:
+            return False
+        return True
 class BTree:
     def __init__(self, name:str, key_len:int, value_types:List[typing.Type[Value]], duplicate_key=False):
         self.container = Container(name)
@@ -203,7 +264,7 @@ class BTree:
         return branch
 
     def parse_control_row(self,record:Record):
-        if not record.fields == 4:
+        if not len(record.fields) == 4:
             raise Exception(f'record内容与数据类型不匹配')
         node_type = IntValue.from_bytes(record.fields[0].value).value
         parent = IntValue.from_bytes(record.fields[1].value).value
@@ -215,11 +276,11 @@ class BTree:
         if not len(record.fields) == self.key_len + 1:
             raise Exception(f'record内容与数据类型不匹配')
         #第一位是 child
-        child = IntValue.from_bytes(record.fields[0].value).value
+        child = IntValue.from_bytes(record.fields[-1].value).value
         #读取key的内容
         key = []
         for i in range(self.key_len):
-            key.append(self.value_type[i].from_bytes(record.fields[i+1].value))
+            key.append(self.value_type[i].from_bytes(record.fields[i].value))
         return BranchRow(Row(key),child)
     def parse_leaf_row(self,record:Record):
         if not len(record.fields) == len(self.value_type):
@@ -273,13 +334,21 @@ class BTree:
         #溢出了，进行split,  将 FULL-1 的部分平分
         self.split_leaf_node(node, value, insert_index)
 
-    def create_root(self,old_root,right_node,key):
+    def none_key(self)->Row:
+        key = []
+        for i in range(self.key_len):
+            key.append(self.value_type[i].none())
+        return Row(key)
+
+
+    def create_root(self,old_root:Node,right_node:Node,key):
+        print('create root')
         old_root.is_root = False
-        root = BranchNode(None,True)
-        root.rows.append(BranchRow(None,old_root))
-        root.rows.append(BranchRow(key,right_node))
-        old_root.parent = root
-        right_node.parent = root
+        root = self.create_branch_node(-1)
+        root.append_row(BranchRow(self.none_key(),old_root.page_num()))
+        root.append_row(BranchRow(key,right_node.page_num()))
+        old_root.set_parent(root.page_num())
+        right_node.set_parent(root.page_num())
         self.tree = root
 
     def get_key(self,row)->Row:
@@ -291,7 +360,7 @@ class BTree:
             raise Exception('不支持获取key')
 
     def split_leaf_node(self, node:LeafNode, value, index):
-
+        print('split leaf node')
         mid = (node.row_num() + 1)//2
         #为了分配left个节点，需要计算从node 中取的内容
         if mid > index:
@@ -300,32 +369,28 @@ class BTree:
         right_node = self.create_leaf_node(node.parent())
         right_node.set_right(node.right())
         if node.right() != -1:
-            node.right.left = right_node
-        right_node.left = node
-        node.right = right_node
-
-        #切分出右边的节点
-        right_node.rows = node.rows[mid:]
-        #调整左边节点的数据
-        node.rows = node.rows[0:mid]
-
+            node.get_right_node().set_left(right_node.page_num())
+        right_node.set_left(node.page_num())
+        node.set_right(right_node.page_num())
+        # node[mid:]移动到 right_node
+        node.move_to_another_node(mid,node.row_num(),right_node)
         if index <mid:
-            node.rows.insert(index,value)
+            node.insert_row(index,value)
         else:
-            right_node.rows.insert(index-mid,value)
+            right_node.insert_row(index-mid,value)
 
         #重新创建即可
-        if node.is_root:
-            self.create_root(node,right_node,right_node.rows[0])
+        if node.is_root():
+            self.create_root(node,right_node,self.get_key(right_node.get_row_i(0)))
             return
         #需要将节点，进行插入
-        node_in_parent_index = node.parent.child_index(node)
+        parent = node.get_parent_node()
+        node_in_parent_index = parent.child_index(node.page_num())
         #不满直接插入
-        insert_key = self.get_key(right_node.rows[0])
-        if not len(node.parent.rows) == FULL:
-            node.parent.rows.insert(node_in_parent_index+1,BranchRow(insert_key,right_node))
+        insert_key = self.get_key(right_node.get_row_i(0))
+        if parent.insert_row(node_in_parent_index+1,BranchRow(insert_key,right_node.page_num())):
             return
-        self.split_branch_node(node.parent, insert_key, right_node, node_in_parent_index+1)
+        self.split_branch_node(parent, insert_key, right_node, node_in_parent_index+1)
 
     @staticmethod
     def   find_index_for_key_insert(keys,k):
@@ -350,59 +415,66 @@ class BTree:
         """
         return FULL // 2
 
-    def split_branch_node(self, node, key, value, key_index):
+    def split_branch_node(self, node:BranchNode, key, value, key_index):
+        if node.row_num() < 3:
+            raise Exception('node key < 3')
+        else:
+            print('split branch')
         #左边分配的长度
-        mid = (FULL//2)+1
-
+        mid = (node.row_num())//2 + 1
 
         #创建好split的节点
-        right_node = BranchNode(node.parent,False)
+        right_node = self.create_branch_node(node.parent())
 
-        right_node.right = node.right
-        if node.right:
-            node.right.left = right_node
-        right_node.left = node
-        node.right = right_node
+        right_node.set_right(node.right())
+        if node.right() != -1:
+            node.get_right_node().set_left(right_node.page_num())
+        right_node.set_left(node.page_num())
+        node.set_right(right_node.page_num())
 
         #新增的key就是插入父级的
         if key_index == mid:
             mid_key = key
-            right_node.rows = node.rows[mid:]
-            right_node.rows.insert(0,BranchRow(None,value))
-            node.rows = node.rows[0:mid]
+            node.move_to_another_node(mid,node.row_num(),right_node)
+            right_node.insert_row(0,BranchRow(self.none_key(),value.page_num()))
         elif key_index > mid:
-            mid_key = self.get_key(node.rows[mid])
-            right_node.rows = node.rows[mid:]
+            mid_key = node.get_row_i(mid).key
+            node.move_to_another_node(mid,node.row_num(),right_node)
             #特殊调整
-            if len(right_node.rows) > 0:
-                right_node.rows[0].key = None
+            if right_node.row_num() > 0:
+                first_row = right_node.get_row_i(0)
+                first_row.key = self.none_key()
+                right_node.update_row_i(0,first_row)
             key_insert_loc = right_node.find_index_for_key_insert(key)
-            right_node.rows.insert(key_insert_loc,BranchRow(key,value))
-            node.rows = node.rows[0:mid]
+            right_node.insert_row(key_insert_loc,BranchRow(key,value.page_num()))
         else:
-            mid_key = self.get_key(node.rows[mid - 1])
-            right_node.rows = node.rows[mid-1:]
-            if len(right_node.rows) > 0:
-                right_node.rows[0].key = None
-            node.rows = node.rows[0:mid-1]
+            mid_key = self.get_key(node.get_row_i(mid - 1))
+            node.move_to_another_node(mid-1,node.row_num(),right_node)
+            if right_node.row_num() > 0:
+                first_row = right_node.get_row_i(0)
+                first_row.key = self.none_key()
+                right_node.update_row_i(0,first_row)
             key_insert_loc = node.find_index_for_key_insert(key)
-            node.rows.insert(key_insert_loc,BranchRow(key,value))
+            node.insert_row(key_insert_loc,BranchRow(key,value.page_num()))
+
 
         #调整右边树的结构
-        for r in right_node.rows:
-            r.child.parent = right_node
+        right_node.set_child_parent()
+        node.set_child_parent()
 
+
+        print(f'mid_key:{mid_key}')
         #重新创建即可
         if node.is_root:
             self.create_root(node,right_node,mid_key)
             return
         #需要将节点，进行插入
-        node_in_parent_index = node.parent.child_index(node)
+        parent = node.get_parent_node()
+        node_in_parent_index = parent.child_index(node.page_num())
         #不满直接插入
-        if not len(node.parent.rows) == FULL:
-            node.parent.rows.insert(node_in_parent_index+1,BranchRow(mid_key,right_node))
+        if parent.insert_row(node_in_parent_index+1,BranchRow(mid_key,right_node.page_num())):
             return
-        self.split_branch_node(node.parent, mid_key, right_node, node_in_parent_index+1)
+        self.split_branch_node(parent, mid_key, right_node, node_in_parent_index+1)
 
     def delete(self,key):
         node = self._search(key, self.tree)
@@ -559,33 +631,38 @@ def del_tree(t:BTree,start,end):
 
 
 def test_tree():
-    t = BTree(1,False)
+    t = BTree('my_tree',1,[IntValue],False)
 
-    for i in range(10000):
-        t.insert(generate_row([i+1]))
+    # t.insert(generate_row([12]))
+    t.insert(generate_row([1]))
+    t.insert(generate_row([2]))
+    t.insert(generate_row([3]))
+    t.insert(generate_row([4]))
+    t.insert(generate_row([5]))
+    t.insert(generate_row([6]))
+    t.insert(generate_row([7]))
+    t.insert(generate_row([8]))
+    t.insert(generate_row([9]))
+    t.insert(generate_row([10]))
+    t.insert(generate_row([11]))
 
-    del_tree(t,100,150)
-    del_tree(t,1000,5000)
-    del_tree(t,9000,9999)
-    del_tree(t,8000,8999)
-    del_tree(t,6000,7777)
-    del_tree(t,200,900)
-
-
-    first = t.search(generate_row([1]))
+    print('------------insert--------------------')
+    t.insert(generate_row([12]))
+    node2 = t.search(generate_row([1]))
     count = 0
-    while first:
-        count+=len(first.rows)
-        print(first.rows)
-        first =first.right
+    while node2:
+        count+=node2.row_num()
+        for i in range(node2.row_num()):
+            print(node2.get_row_i(i),end=',')
+        print()
+        node2 = node2.get_right_node()
     print(count)
 
 
 
 
 
-
-
+test_tree()
 
 
 
