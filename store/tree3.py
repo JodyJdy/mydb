@@ -280,7 +280,10 @@ class BTree:
         #读取key的内容
         key = []
         for i in range(self.key_len):
-            key.append(self.value_type[i].from_bytes(record.fields[i].value))
+            if record.fields[i].is_null():
+                key.append(self.value_type[i].none())
+            else:
+                key.append(self.value_type[i].from_bytes(record.fields[i].value))
         return BranchRow(Row(key),child)
     def parse_leaf_row(self,record:Record):
         if not len(record.fields) == len(self.value_type):
@@ -342,7 +345,6 @@ class BTree:
 
 
     def create_root(self,old_root:Node,right_node:Node,key):
-        print('create root')
         old_root.is_root = False
         root = self.create_branch_node(-1)
         root.append_row(BranchRow(self.none_key(),old_root.page_num()))
@@ -360,7 +362,6 @@ class BTree:
             raise Exception('不支持获取key')
 
     def split_leaf_node(self, node:LeafNode, value, index):
-        print('split leaf node')
         mid = (node.row_num() + 1)//2
         #为了分配left个节点，需要计算从node 中取的内容
         if mid > index:
@@ -418,8 +419,6 @@ class BTree:
     def split_branch_node(self, node:BranchNode, key, value, key_index):
         if node.row_num() < 3:
             raise Exception('node key < 3')
-        else:
-            print('split branch')
         #左边分配的长度
         mid = (node.row_num())//2 + 1
 
@@ -463,9 +462,8 @@ class BTree:
         node.set_child_parent()
 
 
-        print(f'mid_key:{mid_key}')
         #重新创建即可
-        if node.is_root:
+        if node.is_root():
             self.create_root(node,right_node,mid_key)
             return
         #需要将节点，进行插入
@@ -489,7 +487,7 @@ class BTree:
         #key的数量是rows -1
         if len(node.rows) - 1 < self.min_key_num():
             #root节点直接删除即可
-            if not node.is_root:
+            if not node.is_root():
                 self.leaf_node_un_balance(node)
         return result
 
@@ -622,6 +620,37 @@ class BTree:
             self.branch_node_un_balance(parent)
             return
 
+    def show(self):
+        q = [self.tree]
+        all_node: typing.Dict[int,Node] = {self.tree.page_num(): self.tree}
+        while len(q) >0:
+            node = q.pop(0)
+            num = node.row_num()
+            if isinstance(node,BranchNode):
+                keys = []
+                child = []
+                print_child =[]
+                for i in range(num):
+                    row = node.get_row_i(i)
+                    if row.key != self.none_key():
+                        keys.append(row.key)
+                    child_node = self.read_node(row.child)
+                    child.append(child_node)
+                    temp_child = []
+                    for x in range(child_node.row_num()):
+                        temp_row = child_node.get_row_i(x)
+                        if isinstance(temp_row,Row):
+                            temp_child.append(temp_row)
+                        elif isinstance(temp_row,BranchRow):
+                            if temp_row.key != self.none_key():
+                                temp_child.append(temp_row.key)
+                    print_child.append(temp_child)
+                print(f'page_num:{node.page_num()} , keys ={keys}, child ={print_child}')
+                q.extend(child)
+            elif isinstance(node,LeafNode):
+                pass
+
+
 
 
 
@@ -634,21 +663,11 @@ def test_tree():
     t = BTree('my_tree',1,[IntValue],False)
 
     # t.insert(generate_row([12]))
-    t.insert(generate_row([1]))
-    t.insert(generate_row([2]))
-    t.insert(generate_row([3]))
-    t.insert(generate_row([4]))
-    t.insert(generate_row([5]))
-    t.insert(generate_row([6]))
-    t.insert(generate_row([7]))
-    t.insert(generate_row([8]))
-    t.insert(generate_row([9]))
-    t.insert(generate_row([10]))
-    t.insert(generate_row([11]))
+    for i in range(1,100):
+        t.insert(generate_row([i]))
+    t.show()
 
-    print('------------insert--------------------')
-    t.insert(generate_row([12]))
-    node2 = t.search(generate_row([1]))
+    node2 = t.search(generate_row([3]))
     count = 0
     while node2:
         count+=node2.row_num()
