@@ -213,7 +213,7 @@ class BranchNode(Node):
     def append_row(self,row:BranchRow):
         result,_ = self.page.insert_to_last_slot(row.to_row())
         if result == -1:
-            raise Exception('create root fail')
+            raise Exception('insert b tree error')
 
     def update_row_i(self,i,value:BranchRow):
         self.page.update_by_slot(value.to_row(),i+1)
@@ -329,7 +329,7 @@ class BTree:
             i = 1
             row_num = branch_node.row_num()
             if row_num < 1:
-                raise Exception('b tree 结构错误')
+                raise Exception('B tree 结构错误')
             while i < row_num:
                 #如果允许重复插入，新节点，插入左侧节点
                 cur_row_key = branch_node.get_row_i(i).key
@@ -368,7 +368,6 @@ class BTree:
 
 
     def create_root(self,old_root:Node,right_node:Node,key):
-        old_root.is_root = False
         root = self.create_branch_node(-1)
         root.append_row(BranchRow(self.none_key(),old_root.page_num()))
         root.append_row(BranchRow(key,right_node.page_num()))
@@ -493,13 +492,14 @@ class BTree:
         #删除叶子节点的key
         node.remove_i(index)
         #对于磁盘上的 B tree 当 一个节点都没有时，才考虑balance操作
-        if node.row_num() == 0:
+        if node.row_num() <= 1:
             #root节点直接删除即可
             if not node.is_root():
                 self.leaf_node_un_balance(node)
         return True
 
     def leaf_node_un_balance(self, node:LeafNode):
+        print(f'row_num{node.row_num()}')
         """
         叶子节点不平衡
         若兄弟结点key有富余：
@@ -564,8 +564,11 @@ class BTree:
             self.branch_node_un_balance(parent)
             return
 
+        raise Exception("B tree error")
+
 
     def branch_node_un_balance(self,node:BranchNode):
+        print(f'row_num{node.row_num()}')
         """
         分支节点不平衡
         若索引结点的key的个数大于等于 min_key_num结束
@@ -580,6 +583,7 @@ class BTree:
         if node.is_root():
             if node.row_num() == 1:
                 self.tree = self.read_node(node.get_row_i(0).child)
+                self.tree.set_parent(-1)
                 return
 
 
@@ -657,11 +661,11 @@ class BTree:
             right_sibling.set_child_parent(node.page_num())
             right_sibling.move_to_another_node(0,right_sibling.row_num(),node)
             node.set_right(right_sibling.right())
-            node.right = right_sibling.right
             if right_sibling.right()!=-1:
                 right_sibling.get_right_node().set_left(node.page_num())
             self.branch_node_un_balance(parent)
             return
+        raise Exception("B tree error")
 
     def show(self):
         q = [self.tree]
@@ -714,7 +718,8 @@ def test_tree():
     for i in range(0,200):
         t.insert(generate_row([i]))
 
-    for i in range(100,200):
+    for i in range(100,120):
+        print(f'delete deeeeeee:{i}')
         t.delete(generate_row([i]))
 
 
