@@ -860,8 +860,34 @@ class CommonPage(BasePage):
                                                               record_header.next_record_id) not in wait_deleted:
                 wait_deleted.append((record_header.next_page_num, record_header.next_record_id))
 
+    def move_single_slot_to_another_page(self,src_page_slot:int,dst_page_slot:int,another_page):
+        record_offset,record_len = self.read_slot_entry(src_page_slot)
+        free_space = another_page.cal_free_space()
+        new_record_offset_start = another_page.header_records_length(free_space)
+        new_slot_offset_start = cal_slot_entry_offset(another_page.slot_num)
+        #拷贝数据
+        another_page.page_data[new_record_offset_start:new_record_offset_start+record_len] \
+            = self.page_data[record_offset:record_offset+record_len]
+        #编辑slot table
+        struct.pack_into('<ii', another_page.page_data, new_slot_offset_start, new_record_offset_start,
+                         record_len)
+        another_page.increase_slot_num()
+        #将another 新插入的，调整到指定的位置
+        another_page.move_and_insert_slot(another_page.slot_num-1, dst_page_slot)
+        #移除数据
+        self.shrink(record_offset+record_len,-record_len)
+        #移除src_page_slot
+        self.move_and_insert_slot(src_page_slot,self.slot_num - 1)
+        self.decrease_slot_num()
 
     def move_to_another_page(self,src_slot:int, dst_slot:int,another_page):
+        """
+        移动当前页的 [src_slot,dst_slot)到 another_page的尾部
+        :param src_slot:
+        :param dst_slot:
+        :param another_page:
+        :return:
+        """
         another_page:CommonPage
         """不包含 dst_slot"""
         if src_slot >= self.slot_num:
