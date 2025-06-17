@@ -43,6 +43,10 @@ class BasePage:
         self.slot_num += 1
         self.sync()
 
+    def set_slot_num(self,num:int):
+        self.slot_num = num
+        self.sync()
+
     def decrease_slot_num(self):
         self.slot_num -= 1
         self.sync()
@@ -545,6 +549,24 @@ class CommonPage(BasePage):
                     write_offset + CommonPage.over_flow_field_header():CommonPage.over_flow_field_header() + write_offset + field_length] = field.get_bytes()
                     return field_length +CommonPage.over_flow_field_header()
 
+    def insert_over_flow_record(self,over_flow_page_num:int,over_flow_record_id:int, record_id:int|None=None)->Tuple[int,int]:
+        if not record_id:
+            record_id  =  self.get_next_record_id()
+        # 可用空间
+        free_space = self.cal_free_space()
+        # 不够写入header信息
+        if free_space < CommonPage.record_min_size():
+            return -1, -1
+        slot_offset_start = cal_slot_entry_offset(self.slot_num)
+        # 获取写入数据的偏移
+        record_offset_start = self.header_records_length(free_space)
+        struct.pack_into('<biiii', self.page_data, record_offset_start, MULTI_PAGE, record_id,
+                         0, over_flow_page_num,
+                         over_flow_record_id)
+        #只写入头部，什么都不写
+        struct.pack_into('<ii', self.page_data, slot_offset_start, record_offset_start,
+                         CommonPage.record_header_size())
+        self.increase_slot_num()
 
     def insert_to_last_slot(self, row: Row, record_id: int | None = None) -> Tuple[int, int]:
         """
@@ -844,8 +866,9 @@ class CommonPage(BasePage):
                 if status == FIELD_OVER_FLOW:
                     # 跳过数据部分
                     next_page_num, next_record_id = struct.unpack_from('<ii', cur_page.page_data, field_offset)
-                    if  (next_page_num, next_record_id) not in wait_deleted:
-                        wait_deleted.append((next_page_num, next_record_id))
+                    if next_page_num != -1:
+                        if  (next_page_num, next_record_id) not in wait_deleted:
+                            wait_deleted.append((next_page_num, next_record_id))
                     field_offset += field_length
                     field_offset += 4 + 4
                 else:
@@ -864,6 +887,8 @@ class CommonPage(BasePage):
         free_space = another_page.cal_free_space()
         new_record_offset_start = another_page.header_records_length(free_space)
         new_slot_offset_start = cal_slot_entry_offset(another_page.slot_num)
+        if new_record_offset_start + record_len >= new_slot_offset_start:
+            raise Exception('another_page 没有足够的空间')
         #拷贝数据
         another_page.page_data[new_record_offset_start:new_record_offset_start+record_len] \
             = self.page_data[record_offset:record_offset+record_len]
@@ -894,12 +919,17 @@ class CommonPage(BasePage):
         if src_slot >= self.slot_num:
             return
         all_record = []
+
         for i in range(src_slot,dst_slot):
             record_offset,record_len = self.read_slot_entry(i)
             all_record.append((record_offset,record_len))
+
+        for record_offset,record_len in all_record:
             free_space = another_page.cal_free_space()
             new_record_offset_start = another_page.header_records_length(free_space)
             new_slot_offset_start = cal_slot_entry_offset(another_page.slot_num)
+            if new_record_offset_start + record_len > new_slot_offset_start:
+                raise Exception('another_page 没有足够的空间')
             #拷贝数据
             another_page.page_data[new_record_offset_start:new_record_offset_start+record_len]\
                = self.page_data[record_offset:record_offset+record_len]

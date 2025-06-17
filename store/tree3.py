@@ -2,8 +2,9 @@ from typing import Tuple, List
 
 import typing
 
+import config
 from store.container import Container
-from store.page import Record, CommonPage
+from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
 from store.values import StrValue
 from values import Row, generate_row, IntValue, Value
 
@@ -33,6 +34,9 @@ def row_is_none(row:Row):
         if not value.is_null:
             return False
     return True
+
+def min_page_size():
+    return 16 + CommonPage.record_header_size() + (SLOT_TABLE_ENTRY_SIZE + CommonPage.record_min_size()) * 4
 
 LEAF_NODE = 0
 BRANCH_NODE = 1
@@ -103,10 +107,53 @@ class Node:
         target_node:Node
         self.page.move_single_slot_to_another_page(src_row_i+1,target_row_i+1,target_node.page)
 
+    def read_and_delete_page(self,src_slot,target_slot,page,row_list):
+        btree:BTree = self.tree
+        is_branch_node = self.control_row.node_type == BRANCH_NODE
+        for i in range(src_slot,target_slot):
+            record = page.read_slot(i)
+            if is_branch_node:
+                row_list.append(btree.parse_branch_row(record).to_row())
+            else:
+                row_list.append(btree.parse_leaf_row(record))
+            page.decrease_slot_num()
+
+    def insert_row_list_to_page(self,row_list,page):
+        for row in row_list:
+            over_flow_page:CommonPage = page.get_over_flow_page(CommonPage.record_min_size())
+            over_flow_record_id,over_flow_page_num = over_flow_page.insert_to_last_slot(row)
+            if over_flow_record_id == -1:
+                raise Exception('插入数据失败')
+            page.insert_over_flow_record(over_flow_page_num,over_flow_record_id)
 
     def move_to_another_node(self,src,target,other_node):
         other_node:Node
-        self.page.move_to_another_page(src+1,target+1,other_node.page)
+        #在页中的slot位置
+        src_slot = src+1
+        target_slot = target+1
+        cur_page = self.page
+        other_page= other_node.page
+
+        if src_slot >= cur_page.slot_num:
+            return
+        all_record = []
+        #计算空间
+        need_space = 0
+        for i in range(src_slot,target_slot):
+            record_offset,record_len = cur_page.read_slot_entry(i)
+            all_record.append((record_offset,record_len))
+            need_space+=record_len + SLOT_TABLE_ENTRY_SIZE
+        #other_node不够存放，需要将other_node中除了Control Row以外的所有数据都进行over flow
+        if need_space > other_page.cal_free_space():
+            print('空间不够，进行调整')
+            row_list = []
+            #读取other_page的数据
+            self.read_and_delete_page(1,other_page.slot_num,other_page,row_list)
+            #读取当前 page的数据
+            self.read_and_delete_page(src_slot,target_slot,cur_page,row_list)
+            self.insert_row_list_to_page(row_list,other_page)
+        else:
+            self.page.move_to_another_page(src_slot,target_slot,other_node.page)
 
 class LeafNode(Node):
     def __init__(self,page:CommonPage):
@@ -240,10 +287,19 @@ class BranchNode(Node):
     def insert_row(self,i:int,value:BranchRow):
         result,_ = self.page.insert_slot(value.to_row(),i+1)
         if result == -1:
+            #一个 branch row 最少也要有三条记录，才能够进行 split branch操作
+            if self.row_num() < 3:
+                #插入失败，需要调整空间，将 page的内容全部over flow
+                row_list = []
+                self.read_and_delete_page(1,self.page.slot_num,self.page,row_list)
+                row_list.insert(i,value.to_row())
+                self.insert_row_list_to_page(row_list,self.page)
+                return True
             return False
         return True
 class BTree:
     def __init__(self, name:str, key_len:int, value_types:List[typing.Type[Value]], duplicate_key=False):
+        print(f'cur_page_size = {config.PAGE_SIZE}, min_page_size={min_page_size()}')
         self.container = Container(name)
         self.tree = self.create_leaf_node(-1)
         self.key_len = key_len
@@ -329,7 +385,7 @@ class BTree:
             i = 1
             row_num = branch_node.row_num()
             if row_num < 1:
-                raise Exception('B tree 结构错误')
+                raise Exception(f'B tree 结构错误:page:{branch_node.page_num()}')
             while i < row_num:
                 #如果允许重复插入，新节点，插入左侧节点
                 cur_row_key = branch_node.get_row_i(i).key
@@ -443,7 +499,9 @@ class BTree:
         if key_index == mid:
             mid_key = key
             node.move_to_another_node(mid,node.row_num(),right_node)
-            right_node.insert_row(0,BranchRow(self.none_key(),value.page_num()))
+            if not right_node.insert_row(0,BranchRow(self.none_key(),value.page_num())):
+                raise Exception('插入失败')
+
         elif key_index > mid:
             mid_key = node.get_row_i(mid).key
             node.move_to_another_node(mid,node.row_num(),right_node)
@@ -453,7 +511,8 @@ class BTree:
                 first_row.key = self.none_key()
                 right_node.update_row_i(0,first_row)
             key_insert_loc = right_node.find_index_for_key_insert(key)
-            right_node.insert_row(key_insert_loc,BranchRow(key,value.page_num()))
+            if not right_node.insert_row(key_insert_loc,BranchRow(key,value.page_num())):
+                raise Exception('插入失败')
         else:
             mid_key = self.get_key(node.get_row_i(mid - 1))
             node.move_to_another_node(mid-1,node.row_num(),right_node)
@@ -462,7 +521,8 @@ class BTree:
                 first_row.key = self.none_key()
                 right_node.update_row_i(0,first_row)
             key_insert_loc = node.find_index_for_key_insert(key)
-            node.insert_row(key_insert_loc,BranchRow(key,value.page_num()))
+            if not node.insert_row(key_insert_loc,BranchRow(key,value.page_num())):
+                raise Exception('插入失败')
 
 
         #调整右边树的结构
@@ -499,7 +559,6 @@ class BTree:
         return True
 
     def leaf_node_un_balance(self, node:LeafNode):
-        print(f'row_num{node.row_num()}')
         """
         叶子节点不平衡
         若兄弟结点key有富余：
@@ -568,7 +627,6 @@ class BTree:
 
 
     def branch_node_un_balance(self,node:BranchNode):
-        print(f'row_num{node.row_num()}')
         """
         分支节点不平衡
         若索引结点的key的个数大于等于 min_key_num结束
@@ -584,6 +642,8 @@ class BTree:
             if node.row_num() == 1:
                 self.tree = self.read_node(node.get_row_i(0).child)
                 self.tree.set_parent(-1)
+                self.tree.set_left(-1)
+                self.tree.set_right(-1)
                 return
 
 
@@ -598,7 +658,6 @@ class BTree:
             right_sibling = right
 
         if left_sibling and left_sibling.row_num()>=3:
-            print('可以接')
             left_sibling:BranchNode
             row:BranchRow = left_sibling.get_last_row()
             left_sibling.remove_i(left_sibling.row_num()-1)
@@ -678,8 +737,10 @@ class BTree:
                 child = []
                 print_child =[]
                 node_type = None
+                child_page = []
                 for i in range(num):
                     row = node.get_row_i(i)
+                    child_page.append(row.child)
                     if row.key != self.none_key():
                         keys.append(row.key)
                     child_node = self.read_node(row.child)
@@ -697,7 +758,7 @@ class BTree:
                             if temp_row.key != self.none_key():
                                 temp_child.append(temp_row.key)
                     print_child.append(temp_child)
-                print(f'page_num:{node.page_num()} , keys ={keys}, {node_type }child ={print_child}')
+                print(f'page_num:{node.page_num()} , keys ={keys}, {node_type }child ={print_child},child_page={child_page}')
                 q.extend(child)
             elif isinstance(node,LeafNode):
                 pass
@@ -712,16 +773,18 @@ def del_tree(t:BTree,start,end):
 
 
 def test_tree():
-    t = BTree('my_tree',1,[IntValue],False)
+    t = BTree('my_tree',2,[IntValue,IntValue],False)
 
     # t.insert(generate_row([12]))
     for i in range(0,200):
-        t.insert(generate_row([i]))
-
+        t.insert(generate_row([i,i]))
     for i in range(100,120):
-        print(f'delete deeeeeee:{i}')
-        t.delete(generate_row([i]))
+        t.delete(generate_row([i,i]))
+    for i in range(140,160):
+        t.delete(generate_row([i,i]))
 
+    for i in range(180,190):
+        t.delete(generate_row([i,i]))
 
 
 
