@@ -1,6 +1,7 @@
 from typing import Tuple, List
 from values import Row,generate_row
 
+# b tree 最大容量
 FULL = 9
 
 
@@ -67,6 +68,13 @@ class BranchNode(Node):
             if k< row.key:
                 return index
         return len(self.rows)
+
+
+def min_key_num():
+    """
+    节点可以拥有的最小key的数目
+    """
+    return FULL // 2
 
 
 class BTree:
@@ -185,15 +193,9 @@ class BTree:
         """
         # LeafNode 有几行就有几个key
         if isinstance(node,LeafNode):
-            return len(node.rows) >= self.min_key_num() + 1
+            return len(node.rows) >= min_key_num() + 1
         # BranNode key=rows - 1
-        return len(node.rows) - 1 >= self.min_key_num() + 1
-
-    def min_key_num(self):
-        """
-        节点可以拥有的最小key的数目
-        """
-        return FULL // 2
+        return len(node.rows) - 1 >= min_key_num() + 1
 
     def split_branch_node(self, node, key, value, key_index):
         #左边分配的长度
@@ -260,7 +262,7 @@ class BTree:
         result = node.rows.pop(index)
 
         #key的数量是rows -1
-        if len(node.rows) - 1 < self.min_key_num():
+        if len(node.rows) - 1 < min_key_num():
             #root节点直接删除即可
             if not node.is_root:
                 self.leaf_node_un_balance(node)
@@ -329,7 +331,7 @@ class BTree:
          当前结点和兄弟结点及父结点下移key合并成一个新的结点。将当前结点指向父结点
         """
         #个数够了结束
-        if len(node.rows) - 1 >= self.min_key_num():
+        if len(node.rows) - 1 >= min_key_num():
             return
         #根节点允许一定的不平衡
         if node.is_root:
