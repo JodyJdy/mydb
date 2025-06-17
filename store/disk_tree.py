@@ -644,7 +644,6 @@ class BTree:
             return
         # 根节点允许一定的不平衡
         if node.is_root():
-            print(f'root:{node.page_num()}')
             if node.row_num() == 1:
                 self.tree = self.read_node(node.get_row_i(0).child)
                 self.tree.set_parent(-1)
@@ -785,10 +784,8 @@ def test_tree():
         t.insert(generate_row([i, i]))
     for i in range(1000, 1200):
         t.delete(generate_row([i, i]))
-        print(t.container.get_page(38).slot_num)
     for i in range(1400, 1600):
         t.delete(generate_row([i, i]))
-        print(t.container.get_page(38).slot_num)
     for i in range(1800, 1900):
         t.delete(generate_row([i, i]))
 
@@ -804,6 +801,9 @@ def test_tree():
             print()
         node2 = node2.get_right_node()
     print(count)
+
+    t.container.flush()
+    t.container.close()
 
 
 test_tree()

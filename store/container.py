@@ -217,7 +217,7 @@ class ContainerAlloc:
             if e.dirty:
                 offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
                 self.file.seek(offset)
-                self.file.write(struct.pack('<iiii', e.extent_start_page_num, e.new_page_num, e.length, e.status))
+                self.file.write(struct.pack('<iiii', e.extent_start_page_num, e.new_page_num, e.used_num, e.status))
                 self.file.write(e.free_status)
         self.file.flush()
 
