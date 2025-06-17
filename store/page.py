@@ -829,7 +829,6 @@ class CommonPage(BasePage):
             cur_page_num, cur_record_id = wait_deleted.pop(0)
             if (cur_page_num, record_id) in deleted:
                 continue
-            print(f'delete: {cur_page_num} {cur_record_id}')
             deleted.append((cur_page_num, cur_record_id))
             cur_page = self.container.get_page(cur_page_num)
             record_offset, record_length, slot, record_header = cur_page.read_record_header_by_record_id(cur_record_id)
@@ -868,6 +867,8 @@ class CommonPage(BasePage):
         #拷贝数据
         another_page.page_data[new_record_offset_start:new_record_offset_start+record_len] \
             = self.page_data[record_offset:record_offset+record_len]
+        new_record_id = another_page.get_next_record_id()
+        struct.pack_into('<i',another_page.page_data, new_record_offset_start+1, new_record_id)
         #编辑slot table
         struct.pack_into('<ii', another_page.page_data, new_slot_offset_start, new_record_offset_start,
                          record_len)
@@ -902,6 +903,10 @@ class CommonPage(BasePage):
             #拷贝数据
             another_page.page_data[new_record_offset_start:new_record_offset_start+record_len]\
                = self.page_data[record_offset:record_offset+record_len]
+            # !!!!!!!!!!!!!!record id 需要重新生成，不能和another_page中的有冲突
+            new_record_id = another_page.get_next_record_id()
+            struct.pack_into('<i',another_page.page_data, new_record_offset_start+1, new_record_id)
+
             #编辑slot table
             struct.pack_into('<ii', another_page.page_data, new_slot_offset_start, new_record_offset_start,
                              record_len)
