@@ -7,57 +7,87 @@ from typing import Dict, Tuple
 
 from store.page import  CommonPage
 
+# 每个extent管理的页的数量
+PER_EXTENT_PAGE_NUM = 1024
 
 class Extent:
+    #分区 未满
     EXTENT_UN_FILL = 0
+    #分区 已满
     EXTENT_FILL = 1
+    #page 未使用
     PAGE_NOT_USE = 0
+    #page 已经使用
     PAGE_USED = 1
     INVALID_PAGE_NUMBER = -1
 
-    def __init__(self, first: int, last: int, length: int, status, free_status: bytearray, dirty: bool = False):
-        self.first = first
-        self.last = last
-        self.length = length
+    def __init__(self, extent_start_page_num: int, new_page_num: int, used_num: int, status, free_status: bytearray, dirty: bool = False):
+        self.extent_start_page_num = extent_start_page_num
+        self.new_page_num = new_page_num
+        #已经分配的页的数量
+        self.used_num = used_num
         self.status = status
         self.free_status = free_status
         self.dirty = dirty
 
     def has_new_page(self):
-        return  self.last < self.first + self.length
+        return self.new_page_num != PER_EXTENT_PAGE_NUM
 
     def free_page(self, page_num: int):
         self.set_page_status(page_num, Extent.PAGE_NOT_USE)
 
     def is_free(self,page_num:int):
-        return self.free_status[page_num - self.first] == Extent.PAGE_NOT_USE
+        return self.free_status[page_num] == Extent.PAGE_NOT_USE
 
     def set_page_status(self, page_num: int, status: int):
-        self.free_status[page_num - self.first] = status
+        #状态发生变更
+        if status != self.free_status[page_num]:
+            if status == Extent.PAGE_USED:
+                self.used_num+=1
+            else:
+                self.used_num-=1
+        self.free_status[page_num] = status
+
+    def _alloc_local_page(self)->int:
+        # 检查有无空闲
+        if self.used_num < PER_EXTENT_PAGE_NUM:
+            i = 0
+            while i < self.new_page_num:
+                if self.free_status[i] == Extent.PAGE_NOT_USE:
+                    self.set_page_status(i, Extent.PAGE_USED)
+                    return i
+                i += 1
+        # 无空闲页面重新创建
+        local_page_num = self._alloc_local_new_page()
+        if local_page_num == Extent.INVALID_PAGE_NUMBER:
+            self.status = Extent.EXTENT_FILL
+        return local_page_num
 
     def alloc_page(self) -> int:
         if self.status == Extent.EXTENT_FILL:
             return Extent.INVALID_PAGE_NUMBER
-        # 检查有无空闲
-        i = 0
-        while i < self.last - self.first:
-            if self.free_status[i] == Extent.PAGE_NOT_USE:
-                self.set_page_status(i + self.first, Extent.PAGE_USED)
-                return i + self.first
-            i += 1
-        # 重新创建
-        page_num = self.alloc_new_page()
-        if page_num == Extent.INVALID_PAGE_NUMBER:
-            self.status = Extent.EXTENT_FILL
-        return page_num
+        local_page_num = self._alloc_local_page()
+        if local_page_num == Extent.INVALID_PAGE_NUMBER:
+            return Extent.INVALID_PAGE_NUMBER
+        return self.extent_start_page_num + local_page_num
+
+    def _alloc_local_new_page(self):
+        """
+       生成 extent内的页码
+        :return:
+        """
+        if not self.has_new_page():
+            return Extent.INVALID_PAGE_NUMBER
+        self.dirty = True
+        local_page_num = self.new_page_num
+        self.set_page_status(local_page_num, Extent.PAGE_USED)
+        self.new_page_num += 1
+        return local_page_num
 
     def alloc_new_page(self) -> int:
         if self.has_new_page():
-            self.dirty = True
-            page_num = self.last
-            self.set_page_status(page_num, Extent.PAGE_USED)
-            self.last += 1
-            return page_num
+            #生成全局的 page 编号
+            return self.extent_start_page_num + self._alloc_local_new_page()
         return Extent.INVALID_PAGE_NUMBER
 
 
@@ -73,8 +103,6 @@ class ContainerAlloc:
     status  状态 4
     管理页面的状态
     """
-    # 每个extent管理的页的数量
-    PER_EXTENT_PAGE_NUM = 1024
     # 仅存储extent数量
     HEADER_SIZE = 4
     EXTENT_HEADER_SIZE = 4 + 4 + 4 + 4
@@ -118,34 +146,35 @@ class ContainerAlloc:
         return extent
 
     def is_free(self,page_num: int):
-        extent = page_num // ContainerAlloc.PER_EXTENT_PAGE_NUM
+        extent = page_num // PER_EXTENT_PAGE_NUM
         # 不存在
         if extent > self.extent_num:
             return True
-        return self.get_extent(extent).is_free(page_num)
+        return self.get_extent(extent).is_free(page_num % PER_EXTENT_PAGE_NUM)
 
     def free_page(self, page_num: int):
-        extent = page_num // ContainerAlloc.PER_EXTENT_PAGE_NUM
+        extent = page_num // PER_EXTENT_PAGE_NUM
         # 不存在
         if extent > self.extent_num:
             return
-        self.get_extent(extent).free_page(page_num)
+        self.get_extent(extent).free_page(page_num % PER_EXTENT_PAGE_NUM)
 
     def create_extent(self, i: int) -> Extent:
-        first = last = i * ContainerAlloc.PER_EXTENT_PAGE_NUM
-        length = self.PER_EXTENT_PAGE_NUM
+        extent_start_page_num = i * PER_EXTENT_PAGE_NUM
+        new_page_num = 0
+        used_num =  0
         status = Extent.EXTENT_UN_FILL
-        free_status = bytearray(ContainerAlloc.PER_EXTENT_PAGE_NUM)
+        free_status = bytearray(PER_EXTENT_PAGE_NUM)
         offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
         self.file.seek(offset)
-        self.file.write(struct.pack('<iiii', first, last, length, status))
+        self.file.write(struct.pack('<iiii', extent_start_page_num, new_page_num, used_num, status))
         self.file.write(free_status)
-        return Extent(first, last, length, status, free_status, False)
+        return Extent(extent_start_page_num, new_page_num, used_num, status, free_status, False)
 
     @staticmethod
     def extent_space_size() -> int:
         """一个extent占据空间的大小"""
-        return ContainerAlloc.EXTENT_HEADER_SIZE + ContainerAlloc.PER_EXTENT_PAGE_NUM
+        return ContainerAlloc.EXTENT_HEADER_SIZE + PER_EXTENT_PAGE_NUM
 
     def read_extent(self, i: int):
         # 读取extent偏移量
@@ -153,8 +182,8 @@ class ContainerAlloc:
         self.file.seek(offset)
         free_status = bytearray()
         free_status.extend(self.file.read(ContainerAlloc.extent_space_size()))
-        first, last, length, status = struct.unpack('<iiii', free_status[0:ContainerAlloc.EXTENT_HEADER_SIZE])
-        return Extent(first, last, length, status, free_status[ContainerAlloc.EXTENT_HEADER_SIZE:])
+        extent_start_page_num, new_page_num, used_num, status = struct.unpack('<iiii', free_status[0:ContainerAlloc.EXTENT_HEADER_SIZE])
+        return Extent(extent_start_page_num, new_page_num, used_num, status, free_status[ContainerAlloc.EXTENT_HEADER_SIZE:])
 
     def alloc(self, new_page: bool = False):
         if new_page:
@@ -188,7 +217,7 @@ class ContainerAlloc:
             if e.dirty:
                 offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
                 self.file.seek(offset)
-                self.file.write(struct.pack('<iiii', e.first, e.last, e.length, e.status))
+                self.file.write(struct.pack('<iiii', e.extent_start_page_num, e.new_page_num, e.length, e.status))
                 self.file.write(e.free_status)
         self.file.flush()
 
@@ -230,13 +259,13 @@ class Container:
                 self.file.write(zero_data[:diff])
             cur_eof = cur_eof + diff
 
-    def free_page(self,page_number:int):
+    def free_page(self, page_num:int):
         """
         释放页
-        :param page_number:
+        :param page_num:
         :return:
         """
-        self.alloc.free_page(page_number)
+        self.alloc.free_page(page_num)
 
 
     def write_page(self, page_number: int, page_data: bytearray):

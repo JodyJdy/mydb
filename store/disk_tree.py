@@ -791,7 +791,6 @@ def test_tree():
         print(t.container.get_page(38).slot_num)
     for i in range(1800, 1900):
         t.delete(generate_row([i, i]))
-        print(t.container.get_page(38).slot_num)
 
     node2 = t.search(generate_row([0]))
     count = 0
