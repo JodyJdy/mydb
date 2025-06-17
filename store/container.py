@@ -29,6 +29,9 @@ class Extent:
     def free_page(self, page_num: int):
         self.set_page_status(page_num, Extent.PAGE_NOT_USE)
 
+    def is_free(self,page_num:int):
+        return self.free_status[page_num - self.first] == Extent.PAGE_NOT_USE
+
     def set_page_status(self, page_num: int, status: int):
         self.free_status[page_num - self.first] = status
 
@@ -39,8 +42,8 @@ class Extent:
         i = 0
         while i < self.last - self.first:
             if self.free_status[i] == Extent.PAGE_NOT_USE:
-                self.set_page_status(i, Extent.PAGE_USED)
-                return i
+                self.set_page_status(i + self.first, Extent.PAGE_USED)
+                return i + self.first
             i += 1
         # 重新创建
         page_num = self.alloc_new_page()
@@ -113,6 +116,13 @@ class ContainerAlloc:
         extent = self.read_extent(i)
         self.extent_dict[i] = extent
         return extent
+
+    def is_free(self,page_num: int):
+        extent = page_num // ContainerAlloc.PER_EXTENT_PAGE_NUM
+        # 不存在
+        if extent > self.extent_num:
+            return True
+        return self.get_extent(extent).is_free(page_num)
 
     def free_page(self, page_num: int):
         extent = page_num // ContainerAlloc.PER_EXTENT_PAGE_NUM
@@ -219,6 +229,15 @@ class Container:
                 diff = config.PAGE_SIZE
                 self.file.write(zero_data[:diff])
             cur_eof = cur_eof + diff
+
+    def free_page(self,page_number:int):
+        """
+        释放页
+        :param page_number:
+        :return:
+        """
+        self.alloc.free_page(page_number)
+
 
     def write_page(self, page_number: int, page_data: bytearray):
         offset = page_number * config.PAGE_SIZE

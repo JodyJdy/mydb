@@ -156,7 +156,6 @@ class Node:
             need_space += record_len + SLOT_TABLE_ENTRY_SIZE
         # other_node不够存放，需要将other_node中除了Control Row以外的所有数据都进行over flow
         if need_space > other_page.cal_free_space():
-            print('空间不够，进行调整')
             row_list = []
             # 读取other_page的数据
             self.read_and_delete_page(1, other_page.slot_num, other_page, row_list)
@@ -613,6 +612,8 @@ class BTree:
             if node.right() != -1:
                 node.get_right_node().set_left(left_sibling.page_num())
             self.branch_node_un_balance(parent)
+            # 释放 node 所在的page
+            self.container.free_page(node.page_num())
             return
         if right_sibling:
             # 合并右节点到node
@@ -624,6 +625,8 @@ class BTree:
             if right_sibling.right() != -1:
                 right_sibling.get_right_node().set_left(node.page_num())
             self.branch_node_un_balance(parent)
+            # 释放 right_sibling 所在的page
+            self.container.free_page(right_sibling.page_num())
             return
 
         raise Exception("B tree error")
@@ -641,6 +644,7 @@ class BTree:
             return
         # 根节点允许一定的不平衡
         if node.is_root():
+            print(f'root:{node.page_num()}')
             if node.row_num() == 1:
                 self.tree = self.read_node(node.get_row_i(0).child)
                 self.tree.set_parent(-1)
@@ -707,6 +711,8 @@ class BTree:
             if node.right() != -1:
                 node.get_right_node().set_left(left_sibling.page_num())
             self.branch_node_un_balance(parent)
+            # 释放 node 所在的page
+            self.container.free_page(node.page_num())
             return
 
         if right_sibling:
@@ -723,6 +729,8 @@ class BTree:
             if right_sibling.right() != -1:
                 right_sibling.get_right_node().set_left(node.page_num())
             self.branch_node_un_balance(parent)
+            # 释放 right_sibling 所在的page
+            self.container.free_page(right_sibling.page_num())
             return
         raise Exception("B tree error")
 
@@ -777,11 +785,13 @@ def test_tree():
         t.insert(generate_row([i, i]))
     for i in range(1000, 1200):
         t.delete(generate_row([i, i]))
+        print(t.container.get_page(38).slot_num)
     for i in range(1400, 1600):
         t.delete(generate_row([i, i]))
-
+        print(t.container.get_page(38).slot_num)
     for i in range(1800, 1900):
         t.delete(generate_row([i, i]))
+        print(t.container.get_page(38).slot_num)
 
     node2 = t.search(generate_row([0]))
     count = 0
