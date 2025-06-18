@@ -310,6 +310,10 @@ class Container:
         self.alloc.close()
         self.file.close()
 
+    def flush_single_page(self,page:CommonPage):
+        self.write_page(page.page_num,page.page_data)
+        self.file.flush()
+
     def flush(self):
         for k, v in self.cache.items():
             if v.dirty:

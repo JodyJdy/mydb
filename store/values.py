@@ -36,6 +36,15 @@ class Value:
     def __lt__(self, other):
         return self.value < other.value
 
+
+    @staticmethod
+    def type_enum()->int:
+        """
+        类型的枚举值
+        :return:
+        """
+        pass
+
     @staticmethod
     def from_bytes(bytes: bytearray):
         pass
@@ -65,6 +74,11 @@ class ByteArray(Value):
     def from_bytes(value:bytearray)->Value|None:
         return ByteArray(value)
 
+    @staticmethod
+    def type_enum() -> int:
+        return 0
+
+
 class StrValue(Value):
 
     def __init__(self,value:str|None):
@@ -81,6 +95,9 @@ class StrValue(Value):
         if not value:
             return None
         return StrValue(value.decode('utf8'))
+    @staticmethod
+    def type_enum() -> int:
+        return 1
 
     def len_variable(self):
         return True
@@ -133,6 +150,9 @@ class ShortValue(Value):
     def from_bytes(value:bytearray)->Value|None:
         return IntValue(int.from_bytes(value, byteorder='little', signed=True))
 
+    @staticmethod
+    def type_enum() -> int:
+        return 2
     def __repr__(self):
         return f"short:{self.value}"
 
@@ -152,6 +172,9 @@ class IntValue(Value):
         self.is_null = is_null
         if not is_null:
             self.bytes_content = int_to_bytes(value,4)
+    @staticmethod
+    def type_enum() -> int:
+        return 3
 
     @staticmethod
     def none():
@@ -183,11 +206,47 @@ class LongValue(Value):
         return f'long:{self.value}'
 
     @staticmethod
+    def type_enum() -> int:
+        return 4
+    @staticmethod
     def from_bytes(value:bytearray)->Value|None:
         return LongValue(int.from_bytes(value, byteorder='little', signed=True))
     @staticmethod
     def none():
         return LongValue(None,is_null=True)
+
+class BoolValue(Value):
+    """
+        8 字节
+    """
+    def len_variable(self):
+        return False
+    def space_use(self):
+        return 1
+    def get_bytes(self) -> bytearray:
+        return self.bytes_content
+    def __init__(self,value:bool,is_null:bool=False):
+        super().__init__()
+        self.value = value
+        self.is_null = is_null
+        if not is_null:
+            self.bytes_content =  bytearray()
+            self.bytes_content.extend(struct.pack('<b',self.value))
+    def __repr__(self):
+        return f'long:{self.value}'
+
+    @staticmethod
+    def type_enum() -> int:
+        return 5
+
+    @staticmethod
+    def from_bytes(value:bytearray)->Value|None:
+        return LongValue(int.from_bytes(value, byteorder='little', signed=True))
+    @staticmethod
+    def none():
+        return BoolValue(None,is_null=True)
+
+
 class Row:
     """
     一个数据行里面的索引总是出现在前几列
@@ -258,3 +317,12 @@ def generate_row(v:List[int|str|bytearray])->Row:
             values.append(ByteArray(value))
     return Row(values)
 
+
+value_type_dict: Dict[int, typing.Type[Value]] = {
+    ByteArray.type_enum(): ByteArray,
+    StrValue.type_enum(): StrValue,
+    ShortValue.type_enum(): ShortValue,
+    IntValue.type_enum(): IntValue,
+    LongValue.type_enum(): LongValue,
+    BoolValue.type_enum(): BoolValue,
+}

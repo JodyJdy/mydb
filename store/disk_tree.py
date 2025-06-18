@@ -1,9 +1,11 @@
+import os.path
 from typing import Tuple, List
 
 import typing
 
 from store.container import Container
 from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
+from store.values import StrValue, BoolValue, value_type_dict
 from values import Row, generate_row, IntValue, Value
 
 
@@ -306,14 +308,68 @@ class BranchNode(Node):
             return False
         return True
 
+class BTreeInfo:
+    def __init__(self,name: str,root:int, key_len: int,  duplicate_key:bool,value_types: List[typing.Type[Value]]):
+        self.name:str = name
+        self.key_len:int = key_len
+        self.duplicate_key:bool = duplicate_key
+        self.root = root
+        self.value_types:List[typing.Type[Value]] = value_types
+
+    def to_row(self)->Row:
+        row_list = [StrValue(self.name),IntValue(self.key_len),BoolValue(self.duplicate_key),
+                    IntValue(self.root)
+                    ]
+        for value_type in self.value_types:
+            row_list.append(IntValue(value_type.type_enum()))
+        return Row(row_list)
+    @staticmethod
+    def parse_record(record:Record):
+        name = StrValue.from_bytes(record.fields[0].value).value
+        key_len = IntValue.from_bytes(record.fields[1].value).value
+        duplicate_key = BoolValue.from_bytes(record.fields[2].value).value
+        root = IntValue.from_bytes(record.fields[3].value).value
+        value_types: List[typing.Type[Value]] = []
+        for field in record.fields[4:]:
+            value_types.append(value_type_dict[IntValue.from_bytes(field.value).value])
+        return BTreeInfo(name,root,key_len,duplicate_key,value_types)
 
 class BTree:
-    def __init__(self, name: str, key_len: int, value_types: List[typing.Type[Value]], duplicate_key=False):
-        self.container = Container(name)
-        self.tree = self.create_leaf_node(-1)
-        self.key_len = key_len
-        self.value_type = value_types
-        self.duplicate_key = duplicate_key
+
+    @staticmethod
+    def create_btree(btree: BTreeInfo,if_not_exist:bool = False):
+        if os.path.exists(btree.name) and not if_not_exist:
+            raise Exception(f'btree {btree.name} already exists')
+        #page 0 总是存放 btree的信息
+        container = Container(btree.name)
+        btree_info_page = container.new_common_page(is_over_flow=False)
+        #创建根节点
+        root_page = container.new_common_page()
+        control_row = ControlRow(LEAF_NODE, -1, -1, -1)
+        root_page.insert_to_last_slot(control_row.to_row())
+        #记录节点信息
+        btree.root = root_page.page_num
+        btree_info_page.insert_to_last_slot(btree.to_row())
+        container.flush()
+        container.close()
+
+    @staticmethod
+    def open_btree(name:str):
+        if not os.path.exists(name):
+            raise Exception(f'btree {name} not exists')
+            #page 0 总是存放 btree的信息
+        container = Container(name)
+        btree_info_page = container.get_page(0)
+        btree_info = BTreeInfo.parse_record(btree_info_page.read_slot(0))
+        return BTree(btree_info)
+
+
+    def __init__(self, btree_info:BTreeInfo):
+        self.container = Container(btree_info.name)
+        self.tree = self.read_node(btree_info.root)
+        self.key_len = btree_info.key_len
+        self.value_type = btree_info.value_types
+        self.duplicate_key = btree_info.duplicate_key
 
     def create_leaf_node(self, parent: int):
         page = self.container.new_common_page()
@@ -431,6 +487,11 @@ class BTree:
             key.append(self.value_type[i].none())
         return Row(key)
 
+    def update_root(self):
+        btree_info_page = self.container.get_page(0)
+        btree_info_page.update_field_by_index(0,3,IntValue(self.tree.page_num()))
+        btree_info_page.flush()
+
     def create_root(self, old_root: Node, right_node: Node, key):
         root = self.create_branch_node(-1)
         root.append_row(BranchRow(self.none_key(), old_root.page_num()))
@@ -438,6 +499,8 @@ class BTree:
         old_root.set_parent(root.page_num())
         right_node.set_parent(root.page_num())
         self.tree = root
+        #更新root节点
+        self.update_root()
 
     def get_key(self, row) -> Row:
         if isinstance(row, Row):
@@ -649,6 +712,7 @@ class BTree:
                 self.tree.set_parent(-1)
                 self.tree.set_left(-1)
                 self.tree.set_right(-1)
+                self.update_root()
                 return
 
         parent = node.get_parent_node()
@@ -775,20 +839,7 @@ def del_tree(t: BTree, start, end):
     for i in range(start, end):
         t.delete(generate_row([i + 1]))
 
-
-def test_tree():
-    t = BTree('my_tree', 2, [IntValue, IntValue], False)
-
-    # t.insert(generate_row([12]))
-    for i in range(0, 2000):
-        t.insert(generate_row([i, i]))
-    for i in range(1000, 1200):
-        t.delete(generate_row([i, i]))
-    for i in range(1400, 1600):
-        t.delete(generate_row([i, i]))
-    for i in range(1800, 1900):
-        t.delete(generate_row([i, i]))
-
+def test_count(t:BTree):
     node2 = t.search(generate_row([0]))
     count = 0
     while node2:
@@ -802,6 +853,13 @@ def test_tree():
         node2 = node2.get_right_node()
     print(count)
 
+def test_tree():
+    info = BTreeInfo("my_tree2",-1,1,False,[IntValue])
+    BTree.create_btree(info,True)
+    t = BTree.open_btree("my_tree2")
+    # for i in range(30,60):
+    #     t.delete(generate_row([i]))
+    t.show()
     t.container.flush()
     t.container.close()
 

@@ -30,6 +30,7 @@ def cal_slot_entry_offset(slot: int):
 class BasePage:
 
     def __init__(self, page_num: int, page_data: bytearray):
+        self.container = None
         self.page_num = page_num
         self.page_data = page_data
         self.dirty = False
@@ -38,6 +39,9 @@ class BasePage:
 
     def is_over_flow(self) -> bool:
         pass
+
+    def flush(self):
+        self.container.flush_single_page(self)
 
     def increase_slot_num(self):
         self.slot_num += 1
@@ -567,6 +571,7 @@ class CommonPage(BasePage):
         struct.pack_into('<ii', self.page_data, slot_offset_start, record_offset_start,
                          CommonPage.record_header_size())
         self.increase_slot_num()
+        return record_id,self.page_num
 
     def insert_to_last_slot(self, row: Row, record_id: int | None = None) -> Tuple[int, int]:
         """
