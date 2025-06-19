@@ -304,17 +304,23 @@ class Row:
 def over_flow_row(v: bytearray):
     return Row([ByteArray(v)])
 
+def any_to_value(v:any):
+   if isinstance(v,Value):
+       return v
+   elif type(v) == int:
+       return IntValue(v)
+   elif type(v) == str:
+       return StrValue(v)
+   elif type(v) == bytearray:
+       return ByteArray(v)
+   else:
+       raise Exception('不支持的 类型')
+
+
 def generate_row(v:List[int|str|bytearray])->Row:
     values: List[Value] = []
     for value in v:
-        if isinstance(value,Value):
-            values.append(value)
-        elif type(value) == int:
-            values.append(IntValue(value))
-        elif type(value) == str:
-            values.append(StrValue(value))
-        elif type(value) == bytearray:
-            values.append(ByteArray(value))
+        values.append(any_to_value(value))
     return Row(values)
 
 

@@ -466,6 +466,16 @@ class BTree:
                 node = self.read_node(branch_node.get_last_row().child)
         return node
 
+    def update(self,value):
+        key = self.get_key(value)
+        # 找到叶子节点
+        node: LeafNode = self._search(key, self.tree, True)
+        # 查找key相等的部分，如果不存在，就找可以插入的部分
+        eq_index, _ = node.key_index(key)
+        if eq_index == -1:
+            raise Exception(f'key={key}不存在')
+        node.update_row_i(eq_index,value)
+
     def insert(self, value):
         key = self.get_key(value)
         # 找到叶子节点

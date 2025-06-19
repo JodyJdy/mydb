@@ -17,12 +17,6 @@ class BranchNode(Node):
         super().__init__(parent,is_root)
 
 
-def update_parent_key(node:Node):
-    while node.parent:
-        parent = node.parent
-        parent.keys[parent.values.index(node)] = node.keys[-1]
-        node = parent
-
 
 class BTree:
     def __init__(self,duplicate_key=False):
