@@ -108,11 +108,10 @@ class ContainerAlloc:
     EXTENT_HEADER_SIZE = 4 + 4 + 4 + 4
     INVALID_EXTENT_NUM = -1
 
-    def __init__(self, container_path: str):
+    def __init__(self, container_name: str):
         self.extent_dict: Dict[int, Extent] = {}
-        self.path = container_path + '.alloc'
-        file_util.create_file_if_need(self.path)
-        self.file = open(self.path, 'rb+')
+        self.file  = config.create_alloc_if_need(container_name)
+        self.container_name = container_name
         self.dirty = False
         # 未初始化，进行初始化
         if self.get_size() < self.HEADER_SIZE:
@@ -206,7 +205,7 @@ class ContainerAlloc:
         return self.alloc_new()
 
     def get_size(self):
-        return os.path.getsize(self.path)
+        return config.alloc_size(self.container_name)
 
     def flush(self):
         if self.dirty:
@@ -226,16 +225,17 @@ class ContainerAlloc:
 
 
 class Container:
-    def __init__(self, path: str | None = None):
+    def __init__(self, container_name: str | None = None):
         from page import BasePage
-        self.path = path
-        file_util.create_file_if_need(self.path)
-        self.alloc = ContainerAlloc(self.path)
-        self.file = open(self.path, 'rb+')
+        self.container_name = container_name
+        self.file = config.create_container_if_need(container_name)
+        self.alloc = ContainerAlloc(self.container_name)
         self.cache:Dict[int,BasePage]={}
+        #container的唯一标识符
+        self.container_id = config.get_container_id(container_name)
 
     def get_size(self):
-        return os.path.getsize(self.path)
+        return config.container_size(self.container_name)
 
     def seek_page(self, page_number: int):
         offset = page_number * config.PAGE_SIZE
@@ -292,10 +292,10 @@ class Container:
         return page
 
     def new_common_page(self,is_over_flow:bool = False):
-        from page import CommonPage
+        from page import CommonPage,LoggablePage
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.alloc.alloc()
-        page = CommonPage(page_num, page_data)
+        page = LoggablePage(page_num, page_data)
         page.set_container(self)
         if is_over_flow:
             page.init_page(is_over_flow=True)

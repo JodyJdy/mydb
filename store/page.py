@@ -31,6 +31,7 @@ class BasePage:
 
     def __init__(self, page_num: int, page_data: bytearray):
         self.container = None
+        self.container_id = None
         self.page_num = page_num
         self.page_data = page_data
         self.dirty = False
@@ -102,6 +103,7 @@ class BasePage:
 
     def set_container(self, container):
         self.container = container
+        self.container_id = self.container.container_id
 
     def get_next_record_id(self):
         """
@@ -955,3 +957,60 @@ class CommonPage(BasePage):
         for i in range(dst_slot-1,src_slot-1,-1):
             self.move_and_insert_slot(i,self.slot_num - 1)
             self.decrease_slot_num()
+
+
+class LoggablePage(CommonPage):
+    """
+    对所有修改操作， 添加 log
+    """
+    def __init__(self, page_num: int, page_data: bytearray):
+        super().__init__(page_num, page_data)
+
+    def insert_slot(self, row: Row, slot: int, record_id: int | None = None):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_slot')
+        return super().insert_slot(row, slot, record_id)
+
+    def insert_over_flow_record(self, over_flow_page_num: int, over_flow_record_id: int,
+                                record_id: int | None = None) -> Tuple[int, int]:
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_over_flow_record')
+        return super().insert_over_flow_record(over_flow_page_num, over_flow_record_id, record_id)
+
+    def insert_to_last_slot(self, row: Row, record_id: int | None = None) -> Tuple[int, int]:
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_to_last_slot')
+        return super().insert_to_last_slot(row, record_id)
+
+    def delete_by_slot(self, slot: int) -> int:
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:delete_by_slot')
+        return super().delete_by_slot(slot)
+
+    def delete_by_record_id(self, record_id: int):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:delete_by_record_id')
+        return super().delete_by_record_id(record_id)
+
+    def update_slot_field_by_index(self, slot: int, field_index: int, value: Value):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_slot_field_by_index')
+        super().update_slot_field_by_index(slot, field_index, value)
+
+    def update_field_by_index(self, record_id: int, field_index: int, value: Value):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:udpate_field_by_index')
+        super().update_field_by_index(record_id, field_index, value)
+
+    def update_field(self, field: Field, value: Value):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_field')
+        super().update_field(field, value)
+
+    def update_by_record_id(self, row: Row, record_id: int):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_by_record_id')
+        super().update_by_record_id(row, record_id)
+
+    def update_by_slot(self, row: Row, slot: int):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_by_slot')
+        super().update_by_slot(row, slot)
+
+    def move_single_slot_to_another_page(self, src_page_slot: int, dst_page_slot: int, another_page):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_single_slot_to_')
+        super().move_single_slot_to_another_page(src_page_slot, dst_page_slot, another_page)
+
+    def move_to_another_page(self, src_slot: int, dst_slot: int, another_page):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_to_another')
+        super().move_to_another_page(src_slot, dst_slot, another_page)

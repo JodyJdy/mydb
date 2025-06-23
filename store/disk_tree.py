@@ -3,6 +3,7 @@ from typing import Tuple, List
 
 import typing
 
+import config
 from store.container import Container
 from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
 from store.values import StrValue, BoolValue, value_type_dict
@@ -338,8 +339,10 @@ class BTree:
 
     @staticmethod
     def create_btree(btree: BTreeInfo,if_not_exist:bool = False):
-        if os.path.exists(btree.name) and not if_not_exist:
+        if config.container_exists(btree.name) and not if_not_exist:
             raise Exception(f'btree {btree.name} already exists')
+        #记录
+        config.add_container(btree.name)
         #page 0 总是存放 btree的信息
         container = Container(btree.name)
         btree_info_page = container.new_common_page(is_over_flow=False)
@@ -355,7 +358,7 @@ class BTree:
 
     @staticmethod
     def open_btree(name:str):
-        if not os.path.exists(name):
+        if not config.container_exists(name):
             raise Exception(f'btree {name} not exists')
             #page 0 总是存放 btree的信息
         container = Container(name)
@@ -867,8 +870,8 @@ def test_tree():
     info = BTreeInfo("my_tree2",-1,1,False,[IntValue])
     BTree.create_btree(info,True)
     t = BTree.open_btree("my_tree2")
-    # for i in range(30,60):
-    #     t.delete(generate_row([i]))
+    for i in range(0,60):
+        t.insert(generate_row([i]))
     t.show()
     t.container.flush()
     t.container.close()
