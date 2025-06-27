@@ -317,10 +317,11 @@ class Record:
 class CommonPage(BasePage):
     """
         结构:
-     是否是 over_flow_page
+     是否是 over_flow_page 1
      slot数量  4
      下一个可用的记录id  4
-     当前页使用的over_flow_page的最大id
+     当前页使用的over_flow_page的最大id 4
+     日志记录号 8
      record1,record2,record3 ....
      <slot table>
      record结构: record
@@ -345,16 +346,16 @@ class CommonPage(BasePage):
 
     def __init__(self, page_num: int, page_data: bytearray):
         super().__init__(page_num, page_data)
-        self.page_type, self.slot_num, self.next_id, self.over_flow_page_num = struct.unpack_from('<biii',
+        self.page_type, self.slot_num, self.next_id, self.over_flow_page_num,self.lsn = struct.unpack_from('<biiiL',
                                                                                                   self.page_data, 0)
 
     def sync(self):
-        struct.pack_into('<biii', self.page_data, 0, self.page_type, self.slot_num, self.next_id,
-                         self.over_flow_page_num)
+        struct.pack_into('<biiiL', self.page_data, 0, self.page_type, self.slot_num, self.next_id,
+                         self.over_flow_page_num,self.lsn)
         self.dirty = True
 
     def header_size(self) -> int:
-        return 1 + 4 + 4 + 4
+        return 1 + 4 + 4 + 4 + 8
 
     @staticmethod
     def over_flow_field_header():
@@ -645,9 +646,9 @@ class CommonPage(BasePage):
         写入头部信息
         """
         if is_over_flow:
-            struct.pack_into('<biii', self.page_data, 0, OVER_FLOW_PAGE, 0, 0, -1)
+            struct.pack_into('<biiiL', self.page_data, 0, OVER_FLOW_PAGE, 0, 0, -1,0)
         else:
-            struct.pack_into('<biii', self.page_data, 0, NORMAL_PAGE, 0, 0, -1)
+            struct.pack_into('<biiiL', self.page_data, 0, NORMAL_PAGE, 0, 0, -1,0)
         self.over_flow_page_num = -1
 
     def delete_by_slot(self, slot: int) -> int:
