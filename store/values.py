@@ -1,4 +1,3 @@
-import math
 import struct
 import typing
 from abc import abstractmethod
@@ -241,7 +240,7 @@ class BoolValue(Value):
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
-        return LongValue(int.from_bytes(value, byteorder='little', signed=True))
+        return BoolValue(struct.unpack('<b',value)[0] == 1)
     @staticmethod
     def none():
         return BoolValue(None,is_null=True)
@@ -313,6 +312,8 @@ def any_to_value(v:any):
        return StrValue(v)
    elif type(v) == bytearray:
        return ByteArray(v)
+   elif type(v) == bool:
+       return BoolValue(v)
    else:
        raise Exception('不支持的 类型')
 
@@ -332,3 +333,43 @@ value_type_dict: Dict[int, typing.Type[Value]] = {
     LongValue.type_enum(): LongValue,
     BoolValue.type_enum(): BoolValue,
 }
+
+def serialization_value(v:Value)->bytearray:
+    """
+    序列化 value 为 byte array
+    """
+    result =  bytearray()
+    result.extend(struct.pack('<i',v.type_enum()))
+    result.extend(v.get_bytes())
+    return result
+
+def deserialization_value(v:bytearray)->Value|None:
+    value_type = struct.unpack('<i',v[0:4])[0]
+    return value_type_dict[value_type].from_bytes(v[4:])
+
+def serialization_row(row:Row)->bytearray:
+    """
+     序列化 row 为 bytearray
+    :param row:
+    :return:
+    """
+    size = len(row.values)
+    result =  bytearray()
+    result.extend(struct.pack('<i',size))
+    for value in row.values:
+        value_serial = serialization_value(value)
+        result.extend(struct.pack('<i',len(value_serial)))
+        result.extend(value_serial)
+    return result
+
+def deserialization_row(v:bytearray)->Row|None:
+    size = struct.unpack('<i',v[0:4])[0]
+    value_list = []
+    pos = 4
+    for i in range(size):
+        value_len = struct.unpack('<i',v[pos:pos+4])[0]
+        pos += 4
+        value  = deserialization_value(v[pos:pos+value_len])
+        pos += value_len
+        value_list.append(value)
+    return Row(value_list)
