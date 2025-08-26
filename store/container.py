@@ -90,6 +90,91 @@ class Extent:
             return self.extent_start_page_num + self._alloc_local_new_page()
         return Extent.INVALID_PAGE_NUMBER
 
+class ManagementPage:
+    """管理页面结构"""
+    def __init__(self):
+        # 每个管理页面64字节：12字节头部 + 52字节位图
+        self.data = bytearray(64)
+        self._write_header(0, 0, -1)  # 初始元数据
+
+    def _write_header(self, total, free, next_page):
+        """写入管理页面头部信息"""
+        header = struct.pack('>III', total, free, next_page)
+        self.data[0:12] = header
+
+    def _read_header(self):
+        """读取管理页面头部信息"""
+        return struct.unpack('>III', self.data[0:12])
+
+    def set_bit(self, bit_pos):
+        """设置位图中指定位为1"""
+        byte_offset = 12 + (bit_pos // 8)
+        bit_offset = bit_pos % 8
+        if byte_offset < len(self.data):
+            self.data[byte_offset] |= (1 << bit_offset)
+
+    def is_bit_set(self, bit_pos):
+        """检查位图中指定位是否为1"""
+        byte_offset = 12 + (bit_pos // 8)
+        bit_offset = bit_pos % 8
+        if byte_offset >= len(self.data):
+            return False
+        return (self.data[byte_offset] & (1 << bit_offset)) != 0
+
+    def update_header(self, **kwargs):
+        """更新头部字段"""
+        total, free, next_pg = self._read_header()
+        params = {'total': total, 'free': free, 'next_page': next_pg}
+        params.update(kwargs)
+        self._write_header(**params)
+
+    @property
+    def capacity(self):
+        """获取管理页面的管理容量（位）"""
+        return (len(self.data) - 12) * 8  # 52*8=416
+
+class PageManager:
+    """页面管理系统"""
+    def __init__(self):
+        self.mgmt_pages = [ManagementPage()]
+        # 初始化第一个管理页面：管理416个页面
+        self.mgmt_pages[0].update_header(total=416, free=416)
+
+    def allocate_page(self):
+        """分配新页面"""
+        current = self.mgmt_pages[0]
+        while True:
+            total, free, next_pg = current._read_header()
+
+            if free > 0:
+                # 在当前管理页面寻找空闲位
+                for pos in range(current.capacity):
+                    if not current.is_bit_set(pos):
+                        current.set_bit(pos)
+                        current.update_header(free=free-1)
+                        return f"Allocated in page {id(current)} at position {pos}"
+
+            if next_pg == -1:
+                # 需要创建新管理页面
+                new_mgmt = ManagementPage()
+                new_mgmt.update_header(total=416, free=416, next_page=-1)
+                current.update_header(next_page=len(self.mgmt_pages))
+                self.mgmt_pages.append(new_mgmt)
+                current = new_mgmt
+            else:
+                current = self.mgmt_pages[next_pg]
+class ManagementPage:
+    """
+    header 结构
+    4  total  总页面数量
+    4  free    空闲数量
+    """
+    def __init__(self):
+        pass
+class ContainerPageManager:
+    def __init__(self,first_management:bytearray):
+        pass
+
 
 class ContainerAlloc:
     """
@@ -233,6 +318,7 @@ class Container:
         self.cache:Dict[int,BasePage]={}
         #container的唯一标识符
         self.container_id = config.get_container_id(container_name)
+        self.get_page(0)
 
     def get_size(self):
         return config.container_size(self.container_name)
@@ -245,6 +331,11 @@ class Container:
         self.file.seek(offset)
 
     def read_page(self, page_number: int, page_data: bytearray):
+        cur_eof = self.get_size()
+        read_end =(page_number + 1) * config.PAGE_SIZE
+        #读取的页是新的页
+        if cur_eof < read_end:
+            self.pad_file(read_end)
         self.seek_page(page_number)
         page_data.extend(self.file.read(config.PAGE_SIZE))
 
@@ -256,7 +347,7 @@ class Container:
             diff = offset - cur_eof
             if diff > config.PAGE_SIZE:
                 diff = config.PAGE_SIZE
-                self.file.write(zero_data[:diff])
+            self.file.write(zero_data[:diff])
             cur_eof = cur_eof + diff
 
     def free_page(self, page_num:int):
