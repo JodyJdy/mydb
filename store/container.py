@@ -21,19 +21,18 @@ class ManagementPage(CacheablePage):
             self.total = self.free = ManagementPage.capacity()
             self.write_header()  # 初始元数据
 
+    def do_write_header(self,total,free,next_management,lsn):
+        """写入管理页面头部信息"""
+        struct.pack_into('<iiiL',self.page_data,0, total, free, next_management,lsn)
+
     def write_header(self):
         self.dirty = True
-        """写入管理页面头部信息"""
-        struct.pack_into('<iiiL',self.page_data,0, self.total, self.free, self.next_management,self.lsn)
-
-    def write_free_num(self):
-        """写入管理页面空闲页面信息信息"""
-        struct.pack_into('<i',self.page_data,4, self.free)
+        self.do_write_header(self.total,self.free,self.next_management,self.lsn)
 
     def set_bit(self, bit_pos):
         self.dirty = True
         self.free-=1
-        self.write_free_num()
+        self.sync()
         """设置位图中指定位为1"""
         byte_offset = ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
@@ -43,7 +42,7 @@ class ManagementPage(CacheablePage):
     def clear_bit(self, bit_pos):
         self.dirty = True
         self.free+=1
-        self.write_free_num()
+        self.sync()
         """将位图中指定位设置为0"""
         byte_offset =  ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
@@ -58,6 +57,9 @@ class ManagementPage(CacheablePage):
             return False
         return (self.page_data[byte_offset] & (1 << bit_offset)) != 0
 
+    def sync(self):
+        self.write_header()
+
     def is_free(self)->bool:
         return self.free > 0
 
@@ -69,6 +71,19 @@ class ManagementPage(CacheablePage):
     def capacity():
         """获取管理页面的管理容量（位）"""
         return (config.PAGE_SIZE  - ManagementPage.header_size()) * 8
+
+class LoggableManagementPage(ManagementPage):
+    def __init__(self,page_num:int,page_data:bytearray):
+        super().__init__(page_num, page_data)
+    def clear_bit(self, bit_pos):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:clear_bit: {bit_pos}')
+        super().clear_bit(bit_pos)
+    def set_bit(self, bit_pos):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:set_bit: {bit_pos}')
+        super().set_bit(bit_pos)
+    def do_write_header(self,total,free,next_management,lsn):
+        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:write_heaer:{free} {lsn}')
+        super().do_write_header(total,free,next_management,lsn)
 
 class PageManager:
     """页面管理系统"""
@@ -121,12 +136,14 @@ class PageManager:
 
 
 class Container:
-    def __init__(self, container_name: str | None = None):
+    def __init__(self, container_name: str | None = None, log:bool = True):
         self.container_name = container_name
         self.file = config.create_container_if_need(container_name)
         self.cache:Dict[int,CacheablePage]={}
         #container的唯一标识符
         self.container_id = config.get_container_id(container_name)
+        #统一配置是否记录container页面变更
+        self.log = log
         self.page_manager = PageManager(self)
 
     def get_size(self):
@@ -182,16 +199,22 @@ class Container:
         pass
 
     def get_page(self,page_num:int,management_page:bool = False):
-        from page import LoggablePage
+        from page import LoggablePage,CommonPage
         if page_num in self.cache:
             return self.cache[page_num]
         page_data = bytearray()
         self.read_page(page_num, page_data)
         if management_page:
-            page = ManagementPage(page_num,page_data)
+            if self.log:
+                page = LoggableManagementPage(page_num,page_data)
+            else:
+                page = ManagementPage(page_num,page_data)
         else:
-            page = LoggablePage(page_num, page_data)
-            page.set_container(self)
+            if self.log:
+                page = LoggablePage(page_num, page_data)
+            else:
+                page = CommonPage(page_num, page_data)
+        page.set_container(self)
         self.cache[page_num] = page
         return page
 

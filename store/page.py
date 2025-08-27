@@ -31,16 +31,12 @@ def cal_slot_entry_offset(slot: int):
 class BasePage(CacheablePage):
     def __init__(self, page_num: int, page_data: bytearray):
         super().__init__(page_num, page_data)
-        self.container = None
-        self.container_id = None
         self.slot_num = 0
         self.next_id = 0
 
     def is_over_flow(self) -> bool:
         pass
 
-    def flush(self):
-        self.container.flush_single_page(self)
 
     def increase_slot_num(self):
         self.slot_num += 1
@@ -53,13 +49,6 @@ class BasePage(CacheablePage):
     def decrease_slot_num(self):
         self.slot_num -= 1
         self.sync()
-
-    def sync(self):
-        """
-        状态同步到 page_data中
-        :return:
-        """
-        pass
 
     def header_size(self) -> int:
         pass
@@ -99,9 +88,6 @@ class BasePage(CacheablePage):
     def insert_slot(self, row: Row, slot: int, record_id: int | None = None):
         pass
 
-    def set_container(self, container):
-        self.container = container
-        self.container_id = self.container.container_id
 
     def get_next_record_id(self):
         """

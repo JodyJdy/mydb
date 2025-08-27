@@ -9,6 +9,20 @@ from typing import Dict, IO
 import config
 
 
+class FileReader:
+    def __init__(self, path: Path,num:int):
+        self.path = path
+        self.num = num
+        self.file = open(path, "rb")
+
+    def size(self):
+        return self.path.stat().st_size
+
+    def seek(self, offset: int, whence: int = 0):
+        self.file.seek(offset, whence)
+    def read(self, n: int = -1):
+        return self.file.read(n)
+
 class RotatingLogger:
     """
     当前类，只进行 二进制的写入/读取相关，不考虑里面的内容是什么
@@ -28,9 +42,11 @@ class RotatingLogger:
         self.lock = threading.Lock()
         self.current_num = self._find_latest_log_number()
 
-
         if self.current_num == -1:
             self.current_num = 0
+
+        #最大日志文件数
+        self.max_file_num = self.current_num
 
         #创建当前写的文件
         self.current_file = None
@@ -41,7 +57,7 @@ class RotatingLogger:
             self._rotate()
 
         # 用于缓冲需要读取的文件
-        self.read_file_cache:Dict = {}
+        self.file_reader_cache:Dict = {}
 
 
     def _find_latest_log_number(self):
@@ -70,14 +86,14 @@ class RotatingLogger:
 
     def _open_read_file(self,num:int):
         filename = self._get_filename(num)
-        return open(Path(config.LOG_FILE_PATH)/filename, 'rb')  # 二进制追加模式
+        file_path = Path(config.LOG_FILE_PATH)/filename
+        return FileReader(file_path, num)
 
-    def get_read_log_file(self,offset:int):
-        num = offset // self.max_size
-        if num in self.read_file_cache:
-            return self.read_file_cache[num]
-        self.read_file_cache[num] = self._open_read_file(num)
-        return self.read_file_cache[num]
+    def get_read_log_file(self, num:int):
+        if num in self.file_reader_cache:
+            return self.file_reader_cache[num]
+        self.file_reader_cache[num] = self._open_read_file(num)
+        return self.file_reader_cache[num]
 
     def _open_current_file(self):
         filename = self._get_filename(self.current_num)
@@ -96,8 +112,7 @@ class RotatingLogger:
         """本次写入的偏移位置"""
         return self.current_num * self.max_size + self.buffer_bytes
 
-    def write(self, message):
-        data = message.encode('utf-8')
+    def write(self, data):
         msg_size = len(data)
 
         offset = self.write_offset()
@@ -133,7 +148,7 @@ class RotatingLogger:
             self._rotate()
 
         #计算当前文件是否满足
-        free_space = self.max_size - current_file_size
+        free_space = self.max_size - self._current_file_size()
         if free_space >= len(data):
             self.current_file.write(data)
             self.current_file.flush()
@@ -153,16 +168,42 @@ class RotatingLogger:
             self.current_file.close()
 
     def read(self,offset,size):
-        file:IO = self.get_read_log_file(offset)
-        file.seek(offset % self.buffer_size_limit)
-        print(file.read(size))
+        result = bytearray()
+        cur_num = offset // self.max_size
+        file_pos = offset % self.max_size
+        cur_file:FileReader = self.get_read_log_file(cur_num)
+        cur_file.seek(file_pos)
+
+        need_read_size = size
+        while need_read_size != 0:
+            #当前文件的size - 文件pos是可以读取的位置
+            readable_size = cur_file.size() - file_pos
+            #可以一次读完
+            if need_read_size <= readable_size:
+                result.extend(cur_file.read(need_read_size))
+                need_read_size = 0
+            #需要多次读取
+            else:
+                result.extend(cur_file.read(readable_size))
+                need_read_size -= readable_size
+                cur_num += 1
+                file_pos = 0
+                if cur_num > self.max_file_num:
+                    raise Exception("文件读取越界")
+                cur_file = self.get_read_log_file(cur_num)
+                cur_file.seek(file_pos)
+        return result
 
 # 使用示例
 if __name__ == "__main__":
 
-    logger = RotatingLogger("app_log", max_size=1024, buffer_max_size=100)
-    logger.write("hello")
-    logger.flush()
+    logger = RotatingLogger("app_log", max_size=50, buffer_max_size=10)
+    b = bytearray(199)
+    # logger.write(b)
+    # logger.flush()
+
+    print(logger.read(0,199))
+
 
     # 模拟多线程写入
     # def worker():
