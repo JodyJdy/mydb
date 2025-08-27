@@ -4,6 +4,7 @@ from typing import Tuple, List, Any
 
 import config
 from store.values import Row, ByteArray, Value
+from cacheable import CacheablePage
 
 """
 slot table entry 大小固定
@@ -27,14 +28,11 @@ def cal_slot_entry_offset(slot: int):
     return config.PAGE_SIZE - (slot + 1) * SLOT_TABLE_ENTRY_SIZE
 
 
-class BasePage:
-
+class BasePage(CacheablePage):
     def __init__(self, page_num: int, page_data: bytearray):
+        super().__init__(page_num, page_data)
         self.container = None
         self.container_id = None
-        self.page_num = page_num
-        self.page_data = page_data
-        self.dirty = False
         self.slot_num = 0
         self.next_id = 0
 

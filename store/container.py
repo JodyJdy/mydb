@@ -1,11 +1,11 @@
 import config
 import struct
 from typing import Dict, Tuple
-
+from cacheable import CacheablePage
 from store.page import  CommonPage
 
 
-class ManagementPage:
+class ManagementPage(CacheablePage):
     """管理页面结构
     总页面数量: total  4
     空闲页面数量  free 4
@@ -13,11 +13,9 @@ class ManagementPage:
     日志记录号 8
     """
     def __init__(self,page_num:int,page_data:bytearray):
-        self.page_num = page_num
-        self.page_data = page_data
-        self.dirty = False
+        super().__init__(page_num, page_data)
         # 每个管理页面64字节：12字节头部 + 52字节位图
-        self.total,self.free,self.next_management,self.lsn = struct.unpack_from('<iiiL',self.page_data,0)
+        self.total,self.free,self.next_management,self.lsn = struct.unpack_from('<iiiL',page_data,0)
         #未初始化的管理页面，进行初始化
         if self.total == 0:
             self.total = self.free = ManagementPage.capacity()
@@ -124,10 +122,9 @@ class PageManager:
 
 class Container:
     def __init__(self, container_name: str | None = None):
-        from page import BasePage
         self.container_name = container_name
         self.file = config.create_container_if_need(container_name)
-        self.cache:Dict[int,BasePage]={}
+        self.cache:Dict[int,CacheablePage]={}
         #container的唯一标识符
         self.container_id = config.get_container_id(container_name)
         self.page_manager = PageManager(self)
