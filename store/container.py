@@ -1,5 +1,5 @@
 import config
-import struct
+from store import log_struct
 from typing import Dict
 from store.cacheable import CacheablePage
 from store.loggable import Loggable
@@ -16,7 +16,7 @@ class ManagementPage(CacheablePage):
     def __init__(self,page_num:int,page_data:bytearray):
         super().__init__(page_num, page_data)
         # 每个管理页面64字节：12字节头部 + 52字节位图
-        self.total,self.free,self.next_management,self.lsn = struct.unpack_from('<iiiL',page_data,0)
+        self.total,self.free,self.next_management,self.lsn = log_struct.unpack_from('<iiiL',page_data,0)
         #未初始化的管理页面，进行初始化
         if self.total == 0:
             self.total = self.free = ManagementPage.capacity()
@@ -24,7 +24,7 @@ class ManagementPage(CacheablePage):
 
     def do_write_header(self,total,free,next_management,lsn):
         """写入管理页面头部信息"""
-        struct.pack_into('<iiiL',self.page_data,0, total, free, next_management,lsn)
+        log_struct.pack_into('<iiiL',self,0, total, free, next_management,lsn)
 
     def write_header(self):
         self.dirty = True
@@ -38,7 +38,7 @@ class ManagementPage(CacheablePage):
         byte_offset = ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
         if byte_offset < config.PAGE_SIZE:
-            self.page_data[byte_offset] |= (1 << bit_offset)
+            log_struct.set_page_single_byte(self,byte_offset, self.page_data[byte_offset] | (1 << bit_offset))
 
     def clear_bit(self, bit_pos):
         self.dirty = True
@@ -48,7 +48,7 @@ class ManagementPage(CacheablePage):
         byte_offset =  ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
         if byte_offset <  config.PAGE_SIZE:
-            self.page_data[byte_offset] &= ~(1 << bit_offset)
+            log_struct.set_page_single_byte(self,byte_offset,self.page_data[byte_offset] & ~(1 << bit_offset))
 
     def is_bit_set(self, bit_pos):
         """检查位图中指定位是否为1"""

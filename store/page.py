@@ -151,8 +151,9 @@ class BasePage(CacheablePage):
         if shrink_bytes < 0 and shrink_bytes < - offset_start - self.header_size():
             raise Exception('page溢出')
         content_len = self.header_records_length(free_space)
-        self.page_data[offset_start + shrink_bytes:content_len + shrink_bytes] = \
+        log_struct.set_page_range_data(self,offset_start + shrink_bytes,content_len + shrink_bytes,
             self.page_data[offset_start:content_len]
+        )
 
         # 调整slot的偏移量
         for slot, record_offset in shrink_slot:
@@ -457,9 +458,12 @@ class CommonPage(BasePage):
             if field_length + CommonPage.field_header_length() <= free_space:
                 # 写入数据部分
                 log_struct.pack_into('<bi', cur_page, field_write_offset, FIELD_NOT_OVER_FLOW, field_length)
-                cur_page.page_data[
-                field_write_offset + CommonPage.field_header_length():field_write_offset + CommonPage.field_header_length() + field_length] = field.get_bytes()[
-                                                                                                                                              write_from:]
+
+                log_struct.set_page_range_data(cur_page,
+                                               field_write_offset + CommonPage.field_header_length(),
+                                               field_write_offset + CommonPage.field_header_length() + field_length,
+                                               field.get_bytes()[write_from:]
+               )
                 # 写入 record header
                 log_struct.pack_into('<biiii', cur_page, record_offset_start, SINGLE_PAGE, cur_record_id, 1, -1,
                                  -1)
@@ -477,9 +481,12 @@ class CommonPage(BasePage):
                 over_page_record_id = over_page.get_next_record_id()
                 log_struct.pack_into('<biii', cur_page, field_write_offset, FIELD_OVER_FLOW, cur_page_len,
                                  over_page.page_num, over_page_record_id)
-                cur_page.page_data[
-                field_write_offset + CommonPage.over_flow_field_header():CommonPage.over_flow_field_header() + field_write_offset + cur_page_len] = field.get_bytes()[
-                                                                                                                                                    write_from:write_from + cur_page_len]
+
+                log_struct.set_page_range_data(cur_page,
+                                               field_write_offset + CommonPage.over_flow_field_header() ,
+                                               CommonPage.over_flow_field_header() + field_write_offset + cur_page_len ,
+                                               field.get_bytes()[write_from:write_from + cur_page_len]
+                )
                 write_from += cur_page_len
                 # 写入 record header
                 log_struct.pack_into('<biiii', cur_page, record_offset_start, MULTI_PAGE, cur_record_id, 1,
@@ -513,8 +520,11 @@ class CommonPage(BasePage):
             if not field.len_variable() and field_length + CommonPage.field_header_length() <= free_space:
                 # 写入数据部分
                 log_struct.pack_into('<bi', page, write_offset, FIELD_NOT_OVER_FLOW, field_length)
-                page.page_data[
-                write_offset + CommonPage.field_header_length():write_offset + CommonPage.field_header_length() + field_length] = field.get_bytes()
+                log_struct.set_page_range_data(page,
+                                               write_offset + CommonPage.field_header_length(),
+                                               write_offset + CommonPage.field_header_length() + field_length,
+                                               field.get_bytes()
+               )
                 return CommonPage.field_header_length() + field_length
             # 当页不能写完,只能写入一部分,剩下的需要over flow
             else:
@@ -530,9 +540,12 @@ class CommonPage(BasePage):
                     over_page_record_id = over_page.get_next_record_id()
                     log_struct.pack_into('<biii', self, write_offset, FIELD_OVER_FLOW, cur_page_len,
                                      over_page.page_num, over_page_record_id)
-                    self.page_data[
-                    write_offset + CommonPage.over_flow_field_header():CommonPage.over_flow_field_header() + write_offset + cur_page_len] = field.get_bytes()[
-                                                                                                                                            0:cur_page_len]
+
+                    log_struct.set_page_range_data(self,
+                                                   write_offset + CommonPage.over_flow_field_header(),
+                                                   CommonPage.over_flow_field_header() + write_offset + cur_page_len,
+                                                   field.get_bytes()[0:cur_page_len]
+                    )
                     # 剩余的写入over_page
                     self.write_long_field(field, cur_page_len, over_page_record_id, over_page)
                     # fielder header + over flow信息 + 当页写入信息
@@ -540,8 +553,12 @@ class CommonPage(BasePage):
                 else:
                     #要留下over flow 的位置
                     log_struct.pack_into('<biii', self, write_offset, FIELD_OVER_FLOW, field_length,-1, -1)
-                    self.page_data[
-                    write_offset + CommonPage.over_flow_field_header():CommonPage.over_flow_field_header() + write_offset + field_length] = field.get_bytes()
+
+                    log_struct.set_page_range_data(self,
+                                                   write_offset + CommonPage.over_flow_field_header(),
+                                                   CommonPage.over_flow_field_header() + write_offset + field_length,
+                                                   field.get_bytes()
+                   )
                     return field_length +CommonPage.over_flow_field_header()
 
     def insert_over_flow_record(self,over_flow_page_num:int,over_flow_record_id:int, record_id:int|None=None)->Tuple[int,int]:
@@ -755,8 +772,11 @@ class CommonPage(BasePage):
             # 长度固定，直接写数据
             else:
                 log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW,space_use)
-                page.page_data[
-                field.offset + CommonPage.field_header_length():field.offset + CommonPage.field_header_length() + space_use] = value.get_bytes()
+                log_struct.set_page_range_data(page,
+                                               field.offset + CommonPage.field_header_length(),
+                                               field.offset + CommonPage.field_header_length() + space_use,
+                                               value.get_bytes()
+               )
             return
 
         # 所有值为空的情况都已经处理
@@ -779,9 +799,11 @@ class CommonPage(BasePage):
                             -(field.field_length - space_use))
             return
         # 不能在当页放下，一定是 over flow,能放多少放多少
-        page.page_data[
-        field.offset + CommonPage.field_header_length():field.offset + CommonPage.field_header_length() + field.field_length] \
-            = value.get_bytes()[:field.field_length]
+        log_struct.set_page_range_data(page,
+                                       field.offset + CommonPage.field_header_length(),
+                                       field.offset + CommonPage.field_header_length() + field.field_length,
+                                       value.get_bytes()[:field.field_length]
+       )
         # 删除field over flow多余部分，重新写入
         if  field.over_flow_page != -1:
             self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
@@ -886,8 +908,11 @@ class CommonPage(BasePage):
         if new_record_offset_start + record_len >= new_slot_offset_start:
             raise Exception('another_page 没有足够的空间')
         #拷贝数据
-        another_page.page_data[new_record_offset_start:new_record_offset_start+record_len] \
-            = self.page_data[record_offset:record_offset+record_len]
+        log_struct.set_page_range_data(another_page,
+                                       new_record_offset_start,
+                                       new_record_offset_start+record_len,
+                                       self.page_data[record_offset:record_offset+record_len]
+        )
         new_record_id = another_page.get_next_record_id()
         log_struct.pack_into('<i',another_page, new_record_offset_start+1, new_record_id)
         #编辑slot table
@@ -902,16 +927,15 @@ class CommonPage(BasePage):
         self.move_and_insert_slot(src_page_slot,self.slot_num - 1)
         self.decrease_slot_num()
 
-    def move_to_another_page(self,src_slot:int, dst_slot:int,another_page_num:int):
+    def move_to_another_page(self,src_slot:int, dst_slot:int,another_page):
         """
         移动当前页的 [src_slot,dst_slot)到 another_page的尾部
         :param src_slot:
         :param dst_slot:
-        :param another_page_num: 移动到页的page_num
+        :param another_page: 移动到页
         :return:
         """
         another_page:CommonPage
-        another_page = self.container.get_page(another_page_num)
         """不包含 dst_slot"""
         if src_slot >= self.slot_num:
             return
@@ -928,8 +952,11 @@ class CommonPage(BasePage):
             if new_record_offset_start + record_len > new_slot_offset_start:
                 raise Exception('another_page 没有足够的空间')
             #拷贝数据
-            another_page.page_data[new_record_offset_start:new_record_offset_start+record_len]\
-               = self.page_data[record_offset:record_offset+record_len]
+            log_struct.set_page_range_data(another_page,
+                                           new_record_offset_start,
+                                           new_record_offset_start+record_len,
+                                           self.page_data[record_offset:record_offset+record_len]
+            )
             # !!!!!!!!!!!!!!record id 需要重新生成，不能和another_page中的有冲突
             new_record_id = another_page.get_next_record_id()
             log_struct.pack_into('<i',another_page, new_record_offset_start+1, new_record_id)

@@ -166,7 +166,7 @@ class Node:
             self.read_and_delete_page(src_slot, target_slot, cur_page, row_list)
             self.insert_row_list_to_page(row_list, other_page)
         else:
-            self.page.move_to_another_page(src_slot, target_slot, other_node.page.page_num)
+            self.page.move_to_another_page(src_slot, target_slot, other_node.page)
 
 
 class LeafNode(Node):
