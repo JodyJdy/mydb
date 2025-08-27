@@ -161,6 +161,8 @@ class RotatingLogger:
 if __name__ == "__main__":
 
     logger = RotatingLogger("app_log", max_size=1024, buffer_max_size=100)
+    logger.write("hello")
+    logger.flush()
 
     # 模拟多线程写入
     # def worker():
@@ -178,4 +180,3 @@ if __name__ == "__main__":
     # #     t.join()
     #
     # logger.close()
-    print(logger.read(1024,100))
