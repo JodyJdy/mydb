@@ -281,7 +281,8 @@ class Container:
     def init_page(self):
         pass
 
-    def get_page(self,page_num:int):
+    def get_page_not_log(self,page_num:int):
+        from page import CommonPage
         if page_num in self.cache:
             return self.cache[page_num]
         page_data = bytearray()
@@ -291,8 +292,20 @@ class Container:
         self.cache[page_num] = page
         return page
 
-    def new_common_page(self,is_over_flow:bool = False):
+
+    def get_page(self,page_num:int):
         from page import CommonPage,LoggablePage
+        if page_num in self.cache:
+            return self.cache[page_num]
+        page_data = bytearray()
+        self.read_page(page_num, page_data)
+        page = LoggablePage(page_num, page_data)
+        page.set_container(self)
+        self.cache[page_num] = page
+        return page
+
+    def new_common_page(self,is_over_flow:bool = False):
+        from page import LoggablePage
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.alloc.alloc()
         page = LoggablePage(page_num, page_data)

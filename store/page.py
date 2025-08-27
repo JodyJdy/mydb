@@ -967,10 +967,6 @@ class LoggablePage(CommonPage):
     def __init__(self, page_num: int, page_data: bytearray):
         super().__init__(page_num, page_data)
 
-    def insert_slot(self, row: Row, slot: int, record_id: int | None = None):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_slot')
-        return super().insert_slot(row, slot, record_id)
-
     def insert_over_flow_record(self, over_flow_page_num: int, over_flow_record_id: int,
                                 record_id: int | None = None) -> Tuple[int, int]:
         print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_over_flow_record')
@@ -1015,3 +1011,6 @@ class LoggablePage(CommonPage):
     def move_to_another_page(self, src_slot: int, dst_slot: int, another_page):
         print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_to_another')
         super().move_to_another_page(src_slot, dst_slot, another_page)
+    def move_and_insert_slot(self, src_slot: int, target_slot: int):
+        #///
+        super().move_and_insert_slot(src_slot, target_slot)
