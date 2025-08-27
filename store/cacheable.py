@@ -8,6 +8,7 @@ class CacheablePage:
         self.container = None
         self.container_id = None
         self.dirty = False
+        self.lsn = 0
     def sync(self):
         pass
 

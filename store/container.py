@@ -2,8 +2,8 @@ import config
 import struct
 from typing import Dict
 from store.cacheable import CacheablePage
+from store.loggable import Loggable
 from store.page import  CommonPage
-from store.log.binlog import binlog
 
 
 class ManagementPage(CacheablePage):
@@ -73,7 +73,7 @@ class ManagementPage(CacheablePage):
         """获取管理页面的管理容量（位）"""
         return (config.PAGE_SIZE  - ManagementPage.header_size()) * 8
 
-class LoggableManagementPage(ManagementPage):
+class LoggableManagement(ManagementPage, Loggable):
     def __init__(self,page_num:int,page_data:bytearray):
         super().__init__(page_num, page_data)
     def clear_bit(self, bit_pos):
@@ -207,7 +207,7 @@ class Container:
         self.read_page(page_num, page_data)
         if management_page:
             if self.log:
-                page = LoggableManagementPage(page_num,page_data)
+                page = LoggableManagement(page_num, page_data)
             else:
                 page = ManagementPage(page_num,page_data)
         else:
@@ -220,10 +220,13 @@ class Container:
         return page
 
     def new_common_page(self,is_over_flow:bool = False):
-        from store.page import LoggablePage
+        from store.page import CommonPage,LoggablePage
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.page_manager.alloc_page()
-        page = LoggablePage(page_num, page_data)
+        if self.log:
+            page = LoggablePage(page_num, page_data)
+        else:
+            page = CommonPage(page_num,page_data)
         page.set_container(self)
         if is_over_flow:
             page.init_page(is_over_flow=True)
