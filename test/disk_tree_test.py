@@ -1,7 +1,4 @@
 import sys
-sys.path.append("../store")
-sys.path.append("../util")
-sys.path.append("../config.py")
 from store.disk_tree import *
 
 def del_tree(t: BTree, start, end):

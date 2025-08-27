@@ -7,7 +7,7 @@ import config
 from store.container import Container
 from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
 from store.values import StrValue, BoolValue, value_type_dict
-from values import Row, generate_row, IntValue, Value
+from store.values import Row, generate_row, IntValue, Value
 
 
 # 叶子/分支节点都包含的信息
@@ -166,7 +166,7 @@ class Node:
             self.read_and_delete_page(src_slot, target_slot, cur_page, row_list)
             self.insert_row_list_to_page(row_list, other_page)
         else:
-            self.page.move_to_another_page(src_slot, target_slot, other_node.page)
+            self.page.move_to_another_page(src_slot, target_slot, other_node.page.page_num)
 
 
 class LeafNode(Node):

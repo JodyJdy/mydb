@@ -1,8 +1,9 @@
 import config
 import struct
-from typing import Dict, Tuple
-from cacheable import CacheablePage
+from typing import Dict
+from store.cacheable import CacheablePage
 from store.page import  CommonPage
+from store.log.binlog import binlog
 
 
 class ManagementPage(CacheablePage):
@@ -199,7 +200,7 @@ class Container:
         pass
 
     def get_page(self,page_num:int,management_page:bool = False):
-        from page import LoggablePage,CommonPage
+        from store.page import LoggablePage,CommonPage
         if page_num in self.cache:
             return self.cache[page_num]
         page_data = bytearray()
@@ -219,7 +220,7 @@ class Container:
         return page
 
     def new_common_page(self,is_over_flow:bool = False):
-        from page import CommonPage,LoggablePage
+        from store.page import LoggablePage
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.page_manager.alloc_page()
         page = LoggablePage(page_num, page_data)
