@@ -343,7 +343,7 @@ class BTree:
             raise Exception(f'btree {btree.name} already exists')
         #记录
         config.add_container(btree.name)
-        #page 0 总是存放 btree的信息
+        #page 1 总是存放 btree的信息
         container = Container(btree.name)
         btree_info_page = container.new_common_page(is_over_flow=False)
         #创建根节点
@@ -360,9 +360,9 @@ class BTree:
     def open_btree(name:str):
         if not config.container_exists(name):
             raise Exception(f'btree {name} not exists')
-            #page 0 总是存放 btree的信息
         container = Container(name)
-        btree_info_page = container.get_page(0)
+        #page 1 总是存放 btree的信息, page 0 是container的页码管理页
+        btree_info_page = container.get_page(config.BTREE_INFO_PAGE_NUM)
         btree_info = BTreeInfo.parse_record(btree_info_page.read_slot(0))
         return BTree(btree_info)
 
@@ -501,7 +501,8 @@ class BTree:
         return Row(key)
 
     def update_root(self):
-        btree_info_page = self.container.get_page(0)
+        #btree 信息放在第一页
+        btree_info_page = self.container.get_page(config.BTREE_INFO_PAGE_NUM)
         btree_info_page.update_field_by_index(0,3,IntValue(self.tree.page_num()))
         btree_info_page.flush()
 
@@ -846,35 +847,3 @@ class BTree:
                 q.extend(child)
             elif isinstance(node, LeafNode):
                 pass
-
-
-def del_tree(t: BTree, start, end):
-    for i in range(start, end):
-        t.delete(generate_row([i + 1]))
-
-def test_count(t:BTree):
-    node2 = t.search(generate_row([0]))
-    count = 0
-    while node2:
-        count += node2.row_num()
-        if node2.row_num() == 0:
-            pass
-        else:
-            for i in range(node2.row_num()):
-                print(node2.get_row_i(i), end=',')
-            print()
-        node2 = node2.get_right_node()
-    print(count)
-
-def test_tree():
-    info = BTreeInfo("my_tree2",-1,1,False,[IntValue])
-    BTree.create_btree(info,True)
-    t = BTree.open_btree("my_tree2")
-    for i in range(0,60):
-        t.insert(generate_row([i]))
-    t.show()
-    t.container.flush()
-    t.container.close()
-
-
-test_tree()

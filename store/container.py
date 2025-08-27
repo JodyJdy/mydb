@@ -1,227 +1,119 @@
-
 import config
-import file_util
-import os
 import struct
 from typing import Dict, Tuple
 
 from store.page import  CommonPage
 
-# 每个extent管理的页的数量
-PER_EXTENT_PAGE_NUM = 1024
 
-class Extent:
-    #分区 未满
-    EXTENT_UN_FILL = 0
-    #分区 已满
-    EXTENT_FILL = 1
-    #page 未使用
-    PAGE_NOT_USE = 0
-    #page 已经使用
-    PAGE_USED = 1
-    INVALID_PAGE_NUMBER = -1
-
-    def __init__(self, extent_start_page_num: int, new_page_num: int, used_num: int, status, free_status: bytearray, dirty: bool = False):
-        self.extent_start_page_num = extent_start_page_num
-        self.new_page_num = new_page_num
-        #已经分配的页的数量
-        self.used_num = used_num
-        self.status = status
-        self.free_status = free_status
-        self.dirty = dirty
-
-    def has_new_page(self):
-        return self.new_page_num != PER_EXTENT_PAGE_NUM
-
-    def free_page(self, page_num: int):
-        self.set_page_status(page_num, Extent.PAGE_NOT_USE)
-
-    def is_free(self,page_num:int):
-        return self.free_status[page_num] == Extent.PAGE_NOT_USE
-
-    def set_page_status(self, page_num: int, status: int):
-        #状态发生变更
-        if status != self.free_status[page_num]:
-            if status == Extent.PAGE_USED:
-                self.used_num+=1
-            else:
-                self.used_num-=1
-        self.free_status[page_num] = status
-
-    def _alloc_local_page(self)->int:
-        # 检查有无空闲
-        if self.used_num < PER_EXTENT_PAGE_NUM:
-            i = 0
-            while i < self.new_page_num:
-                if self.free_status[i] == Extent.PAGE_NOT_USE:
-                    self.set_page_status(i, Extent.PAGE_USED)
-                    return i
-                i += 1
-        # 无空闲页面重新创建
-        local_page_num = self._alloc_local_new_page()
-        if local_page_num == Extent.INVALID_PAGE_NUMBER:
-            self.status = Extent.EXTENT_FILL
-        return local_page_num
-
-    def alloc_page(self) -> int:
-        if self.status == Extent.EXTENT_FILL:
-            return Extent.INVALID_PAGE_NUMBER
-        local_page_num = self._alloc_local_page()
-        if local_page_num == Extent.INVALID_PAGE_NUMBER:
-            return Extent.INVALID_PAGE_NUMBER
-        return self.extent_start_page_num + local_page_num
-
-    def _alloc_local_new_page(self):
-        """
-       生成 extent内的页码
-        :return:
-        """
-        if not self.has_new_page():
-            return Extent.INVALID_PAGE_NUMBER
-        self.dirty = True
-        local_page_num = self.new_page_num
-        self.set_page_status(local_page_num, Extent.PAGE_USED)
-        self.new_page_num += 1
-        return local_page_num
-
-    def alloc_new_page(self) -> int:
-        if self.has_new_page():
-            #生成全局的 page 编号
-            return self.extent_start_page_num + self._alloc_local_new_page()
-        return Extent.INVALID_PAGE_NUMBER
-
-
-class ContainerAlloc:
+class ManagementPage:
+    """管理页面结构
+    总页面数量: total  4
+    空闲页面数量  free 4
+    下一个管理页面位置: next_management 4
+    日志记录号 8
     """
-    alloc结构:
-      4 byte   extent 数量
-      <num> extent1 extent2....
-    extent结构，大小固定
-    first  首个page number  4
-    last   上个分配的 page number 4
-    length  可以存储的page number 4
-    status  状态 4
-    管理页面的状态
-    """
-    # 仅存储extent数量
-    HEADER_SIZE = 4
-    EXTENT_HEADER_SIZE = 4 + 4 + 4 + 4
-    INVALID_EXTENT_NUM = -1
-
-    def __init__(self, container_name: str):
-        self.extent_dict: Dict[int, Extent] = {}
-        self.file  = config.create_alloc_if_need(container_name)
-        self.container_name = container_name
+    def __init__(self,page_num:int,page_data:bytearray):
+        self.page_num = page_num
+        self.page_data = page_data
         self.dirty = False
-        # 未初始化，进行初始化
-        if self.get_size() < self.HEADER_SIZE:
-            self.file.seek(0)
-            self.file.write(struct.pack('<i', ContainerAlloc.INVALID_EXTENT_NUM))
-            self.file.flush()
-            self.dirty = True
-        self.file.seek(0)
-        self.extent_num = struct.unpack('<i', self.file.read(ContainerAlloc.HEADER_SIZE))[0]
+        # 每个管理页面64字节：12字节头部 + 52字节位图
+        self.total,self.free,self.next_management,self.lsn = struct.unpack_from('<iiiL',self.page_data,0)
+        #未初始化的管理页面，进行初始化
+        if self.total == 0:
+            self.total = self.free = ManagementPage.capacity()
+            self.write_header()  # 初始元数据
 
-    def add_extent(self):
+    def write_header(self):
         self.dirty = True
-        self.extent_num += 1
-        self.extent_dict[self.extent_num] = self.create_extent(self.extent_num)
+        """写入管理页面头部信息"""
+        struct.pack_into('<iiiL',self.page_data,0, self.total, self.free, self.next_management,self.lsn)
 
-    def alloc_new(self) -> int:
-        if self.extent_num == ContainerAlloc.INVALID_EXTENT_NUM:
-            self.add_extent()
-        while True:
-            extent = self.get_extent(self.extent_num)
-            if not extent.has_new_page():
-                self.add_extent()
-            else:
-                return extent.alloc_new_page()
+    def set_bit(self, bit_pos):
+        self.dirty = True
+        self.free-=1
+        """设置位图中指定位为1"""
+        byte_offset = ManagementPage.header_size() + (bit_pos // 8)
+        bit_offset = bit_pos % 8
+        if byte_offset < config.PAGE_SIZE:
+            self.page_data[byte_offset] |= (1 << bit_offset)
 
-    def get_extent(self, i: int):
-        if i in self.extent_dict:
-            return self.extent_dict[i]
-        extent = self.read_extent(i)
-        self.extent_dict[i] = extent
-        return extent
+    def clear_bit(self, bit_pos):
+        self.dirty = True
+        self.free+=1
+        """将位图中指定位设置为0"""
+        byte_offset =  ManagementPage.header_size() + (bit_pos // 8)
+        bit_offset = bit_pos % 8
+        if byte_offset <  config.PAGE_SIZE:
+            self.page_data[byte_offset] &= ~(1 << bit_offset)
 
-    def is_free(self,page_num: int):
-        extent = page_num // PER_EXTENT_PAGE_NUM
-        # 不存在
-        if extent > self.extent_num:
-            return True
-        return self.get_extent(extent).is_free(page_num % PER_EXTENT_PAGE_NUM)
+    def is_bit_set(self, bit_pos):
+        """检查位图中指定位是否为1"""
+        byte_offset = ManagementPage.header_size() + (bit_pos // 8)
+        bit_offset = bit_pos % 8
+        if byte_offset >= config.PAGE_SIZE:
+            return False
+        return (self.page_data[byte_offset] & (1 << bit_offset)) != 0
 
-    def free_page(self, page_num: int):
-        extent = page_num // PER_EXTENT_PAGE_NUM
-        # 不存在
-        if extent > self.extent_num:
-            return
-        self.get_extent(extent).free_page(page_num % PER_EXTENT_PAGE_NUM)
-
-    def create_extent(self, i: int) -> Extent:
-        extent_start_page_num = i * PER_EXTENT_PAGE_NUM
-        new_page_num = 0
-        used_num =  0
-        status = Extent.EXTENT_UN_FILL
-        free_status = bytearray(PER_EXTENT_PAGE_NUM)
-        offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
-        self.file.seek(offset)
-        self.file.write(struct.pack('<iiii', extent_start_page_num, new_page_num, used_num, status))
-        self.file.write(free_status)
-        return Extent(extent_start_page_num, new_page_num, used_num, status, free_status, False)
+    def is_free(self)->bool:
+        return self.free > 0
 
     @staticmethod
-    def extent_space_size() -> int:
-        """一个extent占据空间的大小"""
-        return ContainerAlloc.EXTENT_HEADER_SIZE + PER_EXTENT_PAGE_NUM
+    def header_size()->int:
+        return  4 + 4 + 4 + 8
 
-    def read_extent(self, i: int):
-        # 读取extent偏移量
-        offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
-        self.file.seek(offset)
-        free_status = bytearray()
-        free_status.extend(self.file.read(ContainerAlloc.extent_space_size()))
-        extent_start_page_num, new_page_num, used_num, status = struct.unpack('<iiii', free_status[0:ContainerAlloc.EXTENT_HEADER_SIZE])
-        return Extent(extent_start_page_num, new_page_num, used_num, status, free_status[ContainerAlloc.EXTENT_HEADER_SIZE:])
+    @staticmethod
+    def capacity():
+        """获取管理页面的管理容量（位）"""
+        return (config.PAGE_SIZE  - ManagementPage.header_size()) * 8
 
-    def alloc(self, new_page: bool = False):
-        if new_page:
-            return self.alloc_new()
+class PageManager:
+    """页面管理系统"""
+    def __init__(self,container):
+        self.container = container
+        self.first_page = container.get_page(0,True)
+
+    @staticmethod
+    def next_management_page_num(management_page:ManagementPage)->int:
         """
-        可以复用之前的页
-        :return:
+            计算下一个 管理页码的 真实物理页号
         """
-        if self.extent_num == ContainerAlloc.INVALID_EXTENT_NUM:
-            self.add_extent()
-        i = 0
-        while i <= self.extent_num:
-            extent = self.get_extent(self.extent_num)
-            if extent.has_new_page():
-                page_num = extent.alloc_page()
-                if not page_num == Extent.INVALID_PAGE_NUMBER:
-                    return page_num
-            i = i + 1
-        # 无空闲页
-        return self.alloc_new()
+        return (ManagementPage.capacity() +1 ) + management_page.page_num
 
-    def get_size(self):
-        return config.alloc_size(self.container_name)
+    def free_page(self,page_num:int):
+        pos = page_num % (ManagementPage.capacity() +1 )
+        if pos == 0:
+            raise Exception('管理页面不允许释放')
+        management_page = page_num - pos
+        page = self.container.get_page(management_page,True)
+        page.clear_bit(pos-1)
 
-    def flush(self):
-        if self.dirty:
-            self.file.seek(0)
-            content = struct.pack('<i', self.extent_num)
-            self.file.write(content)
-        for i, e in self.extent_dict.items():
-            if e.dirty:
-                offset = i * ContainerAlloc.extent_space_size() + ContainerAlloc.HEADER_SIZE
-                self.file.seek(offset)
-                self.file.write(struct.pack('<iiii', e.extent_start_page_num, e.new_page_num, e.used_num, e.status))
-                self.file.write(e.free_status)
-        self.file.flush()
+    def alloc_page(self):
+        management_page,pos = self._allocate_page()
+        #计算物理偏移量
+        return management_page + pos + 1
 
-    def close(self):
-        self.file.close()
+    def _allocate_page(self)->[int,int]:
+        """分配新页面
+        返回 管理页面的 页号 和 偏移量， 真实的 物理页号需要再进行一次计算
+        """
+        current = self.first_page
+        while True:
+            if current.is_free():
+                # 在当前管理页面寻找空闲位
+                for pos in range(ManagementPage.capacity()):
+                    if not current.is_bit_set(pos):
+                        current.set_bit(pos)
+                        return current.page_num,pos
+            if current.next_management == 0:
+                #计算新管理页码的物理页号
+                new_mg_page_num = PageManager.next_management_page_num(current)
+                current.next_management =  new_mg_page_num
+                current.write_header()
+            else:
+                new_mg_page_num = current.next_management
+            # 需要创建新管理页面
+            new_mgmt = self.container.get_page(new_mg_page_num,True)
+            current = new_mgmt
 
 
 class Container:
@@ -229,10 +121,10 @@ class Container:
         from page import BasePage
         self.container_name = container_name
         self.file = config.create_container_if_need(container_name)
-        self.alloc = ContainerAlloc(self.container_name)
         self.cache:Dict[int,BasePage]={}
         #container的唯一标识符
         self.container_id = config.get_container_id(container_name)
+        self.page_manager = PageManager(self)
 
     def get_size(self):
         return config.container_size(self.container_name)
@@ -245,6 +137,11 @@ class Container:
         self.file.seek(offset)
 
     def read_page(self, page_number: int, page_data: bytearray):
+        cur_eof = self.get_size()
+        read_end =(page_number + 1) * config.PAGE_SIZE
+        #读取的页是新的页
+        if cur_eof < read_end:
+            self.pad_file(read_end)
         self.seek_page(page_number)
         page_data.extend(self.file.read(config.PAGE_SIZE))
 
@@ -256,7 +153,7 @@ class Container:
             diff = offset - cur_eof
             if diff > config.PAGE_SIZE:
                 diff = config.PAGE_SIZE
-                self.file.write(zero_data[:diff])
+            self.file.write(zero_data[:diff])
             cur_eof = cur_eof + diff
 
     def free_page(self, page_num:int):
@@ -265,7 +162,7 @@ class Container:
         :param page_num:
         :return:
         """
-        self.alloc.free_page(page_num)
+        self.page_manager.free_page(page_num)
 
 
     def write_page(self, page_number: int, page_data: bytearray):
@@ -281,33 +178,23 @@ class Container:
     def init_page(self):
         pass
 
-    def get_page_not_log(self,page_num:int):
-        from page import CommonPage
+    def get_page(self,page_num:int,management_page:bool = False):
         if page_num in self.cache:
             return self.cache[page_num]
         page_data = bytearray()
         self.read_page(page_num, page_data)
-        page = CommonPage(page_num, page_data)
-        page.set_container(self)
-        self.cache[page_num] = page
-        return page
-
-
-    def get_page(self,page_num:int):
-        from page import CommonPage,LoggablePage
-        if page_num in self.cache:
-            return self.cache[page_num]
-        page_data = bytearray()
-        self.read_page(page_num, page_data)
-        page = LoggablePage(page_num, page_data)
-        page.set_container(self)
+        if management_page:
+            page = ManagementPage(page_num,page_data)
+        else:
+            page = CommonPage(page_num, page_data)
+            page.set_container(self)
         self.cache[page_num] = page
         return page
 
     def new_common_page(self,is_over_flow:bool = False):
-        from page import LoggablePage
+        from page import CommonPage,LoggablePage
         page_data = bytearray(config.PAGE_SIZE)
-        page_num = self.alloc.alloc()
+        page_num = self.page_manager.alloc_page()
         page = LoggablePage(page_num, page_data)
         page.set_container(self)
         if is_over_flow:
@@ -320,7 +207,6 @@ class Container:
 
 
     def close(self):
-        self.alloc.close()
         self.file.close()
 
     def flush_single_page(self,page:CommonPage):
@@ -331,5 +217,4 @@ class Container:
         for k, v in self.cache.items():
             if v.dirty:
                 self.write_page(k,v.page_data)
-        self.alloc.flush()
         self.file.flush()
