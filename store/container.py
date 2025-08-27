@@ -28,9 +28,14 @@ class ManagementPage:
         """写入管理页面头部信息"""
         struct.pack_into('<iiiL',self.page_data,0, self.total, self.free, self.next_management,self.lsn)
 
+    def write_free_num(self):
+        """写入管理页面空闲页面信息信息"""
+        struct.pack_into('<i',self.page_data,4, self.free)
+
     def set_bit(self, bit_pos):
         self.dirty = True
         self.free-=1
+        self.write_free_num()
         """设置位图中指定位为1"""
         byte_offset = ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
@@ -40,6 +45,7 @@ class ManagementPage:
     def clear_bit(self, bit_pos):
         self.dirty = True
         self.free+=1
+        self.write_free_num()
         """将位图中指定位设置为0"""
         byte_offset =  ManagementPage.header_size() + (bit_pos // 8)
         bit_offset = bit_pos % 8
