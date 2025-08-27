@@ -179,6 +179,7 @@ class Container:
         pass
 
     def get_page(self,page_num:int,management_page:bool = False):
+        from page import LoggablePage
         if page_num in self.cache:
             return self.cache[page_num]
         page_data = bytearray()
@@ -186,7 +187,7 @@ class Container:
         if management_page:
             page = ManagementPage(page_num,page_data)
         else:
-            page = CommonPage(page_num, page_data)
+            page = LoggablePage(page_num, page_data)
             page.set_container(self)
         self.cache[page_num] = page
         return page
