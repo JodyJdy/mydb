@@ -21,6 +21,9 @@ class CacheablePage:
     def sync(self):
         pass
 
+    def set_lsn(self, lsn):
+        self.lsn = lsn
+
     def set_container(self, container):
         self.container = container
         self.container_id = self.container.container_id

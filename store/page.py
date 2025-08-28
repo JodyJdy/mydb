@@ -6,6 +6,7 @@ from store import log_struct
 from typing import Tuple, List, Any
 
 import config
+import struct
 from store.values import Row,  Value
 from store.cacheable import CacheablePage,NORMAL_PAGE,OVER_FLOW_PAGE
 
@@ -331,6 +332,12 @@ class CommonPage(BasePage):
         super().__init__(page_num, page_data)
         self.page_type, self.slot_num, self.next_id, self.over_flow_page_num,self.lsn = log_struct.unpack_from('<biiiL',
                                                                                                   self.page_data, 0)
+
+    def set_lsn(self, lsn):
+        super().set_lsn(lsn)
+        #写入 page_data !!!!! 配合binlog使用，不需要记录日志，此处使用普通的struct方法
+        struct.pack_into('<biiiL', self.page_data, 0, self.page_type, self.slot_num, self.next_id,
+                             self.over_flow_page_num,self.lsn)
 
     def sync(self):
         log_struct.pack_into('<biiiL', self, 0, self.page_type, self.slot_num, self.next_id,

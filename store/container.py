@@ -1,6 +1,7 @@
 import threading
 
 import config
+import struct
 from store import log_struct
 from typing import Dict
 from store.cacheable import *
@@ -28,13 +29,15 @@ class ManagementPage(CacheablePage):
             self.free = ManagementPage.capacity()
             self.write_header()  # 初始元数据
 
-    def do_write_header(self,page_type,free,next_management,lsn):
-        """写入管理页面头部信息"""
-        log_struct.pack_into('<biiL',self,0, page_type, free, next_management,lsn)
+
+    def set_lsn(self, lsn):
+        super().set_lsn(lsn)
+        #写入 page_data !!!!! 配合binlog使用，不需要记录日志，此处使用普通的struct方法
+        struct.pack_into('<biiL',self.page_data,0, self.page_type, self.free, self.next_management,self.lsn)
 
     def write_header(self):
         self.dirty = True
-        self.do_write_header(self.page_type,self.free,self.next_management,self.lsn)
+        log_struct.pack_into('<biiL',self,0, self.page_type, self.free, self.next_management,self.lsn)
 
     def set_bit(self, bit_pos):
         self.dirty = True
@@ -250,7 +253,7 @@ class Container:
 
     def flush_single_page(self,page:CommonPage):
         #刷新页面时设置lsn
-        page.lsn = binlog.log_end_pos()
+        page.set_lsn(binlog.log_end_pos())
         self.write_page(page.page_num,page.page_data)
         self.file.flush()
 
@@ -258,7 +261,7 @@ class Container:
         for k, v in self.cache.items():
             log_end_pos = binlog.log_end_pos()
             if v.dirty:
-                v.lsn = log_end_pos
+                v.set_lsn(log_end_pos)
                 self.write_page(k,v.page_data)
                 v.dirty = False
         self.file.flush()
