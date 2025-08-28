@@ -67,6 +67,12 @@ class BinLog:
             self.logger.write(byte_content)
         return offset
 
+    def read_single_log_entry(self,offset):
+        size = struct.unpack_from("<i",self.logger.read(offset,4),0)[0]
+        entry = PhysicalPageLogEntry.deserialize(self.logger.read(offset + 4,size))
+        entry.set_entry_pos(offset)
+        return entry
+
     def read_log_entry(self,offset):
         end_pos = self.log_end_pos()
         while offset < end_pos:

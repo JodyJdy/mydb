@@ -4,7 +4,7 @@ import config
 from store import log_struct
 from typing import Dict
 from store.cacheable import *
-from store.loggable import Loggable
+from store.log.binlog import binlog
 from store.page import  CommonPage
 from store.pagedatacache import page_data_cache
 
@@ -249,12 +249,16 @@ class Container:
         self.file.close()
 
     def flush_single_page(self,page:CommonPage):
+        #刷新页面时设置lsn
+        page.lsn = binlog.log_end_pos()
         self.write_page(page.page_num,page.page_data)
         self.file.flush()
 
     def flush(self):
         for k, v in self.cache.items():
+            log_end_pos = binlog.log_end_pos()
             if v.dirty:
+                v.lsn = log_end_pos
                 self.write_page(k,v.page_data)
                 v.dirty = False
         self.file.flush()

@@ -776,8 +776,11 @@ class CommonPage(BasePage):
         # 所有值为空的情况都已经处理
         # 可以在当页放下
         if space_use <= field.field_length:
-            page.page_data[
-            field.offset + CommonPage.field_header_length():field.offset + CommonPage.field_header_length() + space_use] = value.get_bytes()
+            log_struct.set_page_range_data(page,
+                                           field.offset + CommonPage.field_header_length(),
+                                           field.offset + CommonPage.field_header_length() + space_use,
+                                           value.get_bytes()
+            )
             log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW, space_use)
             self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                         -(field.field_length - space_use))

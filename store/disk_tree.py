@@ -339,8 +339,11 @@ class BTree:
 
     @staticmethod
     def create_btree(btree: BTreeInfo,if_not_exist:bool = False):
-        if config.container_exists(btree.name) and not if_not_exist:
-            raise Exception(f'btree {btree.name} already exists')
+        if config.container_exists(btree.name):
+            if  not if_not_exist:
+                raise Exception(f'btree {btree.name} already exists')
+            else:
+                return
         #记录
         config.add_container(btree.name)
         #page 1 总是存放 btree的信息
