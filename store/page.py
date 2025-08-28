@@ -6,9 +6,8 @@ from store import log_struct
 from typing import Tuple, List, Any
 
 import config
-from store.loggable import Loggable
-from store.values import Row, ByteArray, Value
-from store.cacheable import CacheablePage
+from store.values import Row,  Value
+from store.cacheable import CacheablePage,NORMAL_PAGE,OVER_FLOW_PAGE
 
 """
 slot table entry 大小固定
@@ -16,11 +15,6 @@ slot table entry 大小固定
 """
 SLOT_TABLE_ENTRY_SIZE = 4 + 4
 
-"""
-表示是over flow page
-"""
-OVER_FLOW_PAGE = 1
-NORMAL_PAGE = 0
 
 
 def cal_slot_entry_offset(slot: int):
@@ -101,8 +95,8 @@ class BasePage(CacheablePage):
         self.next_id += 1
         return record_id
 
-    def init_page(self, is_over_flow: bool = False):
-        """新创建页面时，需要初始化"""
+    def init_page_header(self, is_over_flow: bool = False):
+        """新创建页面时，需要初始化页面头部"""
         pass
 
     def read_slot_entry(self, slot) -> Tuple[int, int]:
@@ -646,7 +640,7 @@ class CommonPage(BasePage):
     def is_over_flow(self) -> bool:
         return self.page_type == OVER_FLOW_PAGE
 
-    def init_page(self, is_over_flow: bool = False):
+    def init_page_header(self, is_over_flow: bool = False):
         """
         写入头部信息
         """
@@ -974,56 +968,3 @@ class CommonPage(BasePage):
         for i in range(dst_slot-1,src_slot-1,-1):
             self.move_and_insert_slot(i,self.slot_num - 1)
             self.decrease_slot_num()
-
-class LoggablePage(CommonPage, Loggable):
-    """
-    对所有修改操作， 添加 log
-    """
-    def __init__(self, page_num: int, page_data: bytearray):
-        super().__init__(page_num, page_data)
-
-    def insert_over_flow_record(self, *args,**kwargs) -> Tuple[int, int]:
-        return super().insert_over_flow_record(*args,**kwargs)
-
-    def insert_to_last_slot(self, *args,**kwargs) -> Tuple[int, int]:
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:insert_to_last_slot')
-        return super().insert_to_last_slot(*args)
-
-    def delete_by_slot(self, *args,**kwargs) -> int:
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:delete_by_slot')
-        return super().delete_by_slot(*args)
-
-    def delete_by_record_id(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:delete_by_record_id')
-        return super().delete_by_record_id(*args)
-
-    def update_slot_field_by_index(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_slot_field_by_index')
-        super().update_slot_field_by_index(*args,**kwargs)
-
-    def update_field_by_index(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:udpate_field_by_index')
-        super().update_field_by_index(*args,**kwargs)
-
-    def update_field(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_field')
-        super().update_field(*args,**kwargs)
-
-    def update_by_record_id(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_by_record_id')
-        super().update_by_record_id(*args,**kwargs)
-
-    def update_by_slot(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:update_by_slot')
-        super().update_by_slot(*args,**kwargs)
-
-    def move_single_slot_to_another_page(self,*args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_single_slot_to_')
-        super().move_single_slot_to_another_page(*args,**kwargs)
-
-    def move_to_another_page(self,*args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_to_another')
-        super().move_to_another_page(*args,**kwargs)
-    def move_and_insert_slot(self, *args,**kwargs):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:move_and_insert_slot')
-        super().move_and_insert_slot(*args,**kwargs)

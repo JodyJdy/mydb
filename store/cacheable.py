@@ -1,3 +1,11 @@
+
+"""
+页面类型
+"""
+OVER_FLOW_PAGE = 1
+NORMAL_PAGE = 0
+MANAGEMENT_PAGE = 2
+
 class CacheablePage:
     """
     缓存页的统一父类
@@ -9,6 +17,7 @@ class CacheablePage:
         self.container_id = None
         self.dirty = False
         self.lsn = 0
+        self.page_type = 0
     def sync(self):
         pass
 
@@ -18,3 +27,6 @@ class CacheablePage:
 
     def flush(self):
         self.container.flush_single_page(self)
+
+    def init(self):
+        pass

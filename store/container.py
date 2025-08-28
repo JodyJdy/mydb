@@ -1,34 +1,40 @@
+import threading
+
 import config
 from store import log_struct
 from typing import Dict
-from store.cacheable import CacheablePage
+from store.cacheable import *
 from store.loggable import Loggable
 from store.page import  CommonPage
+from store.pagedatacache import page_data_cache
 
 
 class ManagementPage(CacheablePage):
     """管理页面结构
-    总页面数量: total  4
+    页面类型: page_type  1
     空闲页面数量  free 4
     下一个管理页面位置: next_management 4
     日志记录号 8
     """
     def __init__(self,page_num:int,page_data:bytearray):
         super().__init__(page_num, page_data)
-        # 每个管理页面64字节：12字节头部 + 52字节位图
-        self.total,self.free,self.next_management,self.lsn = log_struct.unpack_from('<iiiL',page_data,0)
+
+        self.page_type,self.free,self.next_management,self.lsn = log_struct.unpack_from('<biiL',page_data,0)
+
+    def init(self):
         #未初始化的管理页面，进行初始化
-        if self.total == 0:
-            self.total = self.free = ManagementPage.capacity()
+        if self.page_type == 0:
+            self.page_type = MANAGEMENT_PAGE
+            self.free = ManagementPage.capacity()
             self.write_header()  # 初始元数据
 
-    def do_write_header(self,total,free,next_management,lsn):
+    def do_write_header(self,page_type,free,next_management,lsn):
         """写入管理页面头部信息"""
-        log_struct.pack_into('<iiiL',self,0, total, free, next_management,lsn)
+        log_struct.pack_into('<biiL',self,0, page_type, free, next_management,lsn)
 
     def write_header(self):
         self.dirty = True
-        self.do_write_header(self.total,self.free,self.next_management,self.lsn)
+        self.do_write_header(self.page_type,self.free,self.next_management,self.lsn)
 
     def set_bit(self, bit_pos):
         self.dirty = True
@@ -66,31 +72,19 @@ class ManagementPage(CacheablePage):
 
     @staticmethod
     def header_size()->int:
-        return  4 + 4 + 4 + 8
+        return  1 + 4 + 4 + 8
 
     @staticmethod
     def capacity():
         """获取管理页面的管理容量（位）"""
         return (config.PAGE_SIZE  - ManagementPage.header_size()) * 8
 
-class LoggableManagement(ManagementPage, Loggable):
-    def __init__(self,page_num:int,page_data:bytearray):
-        super().__init__(page_num, page_data)
-    def clear_bit(self, bit_pos):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:clear_bit: {bit_pos}')
-        super().clear_bit(bit_pos)
-    def set_bit(self, bit_pos):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:set_bit: {bit_pos}')
-        super().set_bit(bit_pos)
-    def do_write_header(self,total,free,next_management,lsn):
-        print(f'container_id:{self.container_id}, page_id:{self.page_num} operate:write_heaer:{free} {lsn}')
-        super().do_write_header(total,free,next_management,lsn)
 
 class PageManager:
     """页面管理系统"""
     def __init__(self,container):
         self.container = container
-        self.first_page = container.get_page(0,True)
+        self.first_page = container.get_or_create_manage_page(0)
 
     @staticmethod
     def next_management_page_num(management_page:ManagementPage)->int:
@@ -104,7 +98,7 @@ class PageManager:
         if pos == 0:
             raise Exception('管理页面不允许释放')
         management_page = page_num - pos
-        page = self.container.get_page(management_page,True)
+        page = self.container.get_or_create_manage_page(management_page)
         page.clear_bit(pos-1)
 
     def alloc_page(self):
@@ -132,12 +126,13 @@ class PageManager:
             else:
                 new_mg_page_num = current.next_management
             # 需要创建新管理页面
-            new_mgmt = self.container.get_page(new_mg_page_num,True)
+            new_mgmt = self.container.get_or_create_manage_page(new_mg_page_num)
             current = new_mgmt
 
 
 class Container:
     def __init__(self, container_name: str | None = None, log:bool = True):
+        self._lock = threading.Lock()
         self.container_name = container_name
         self.file = config.create_container_if_need(container_name)
         self.cache:Dict[int,CacheablePage]={}
@@ -145,6 +140,13 @@ class Container:
         self.container_id = config.get_container_id(container_name)
         #统一配置是否记录container页面变更
         self.log = log
+        self.page_manager = None
+
+    def init(self):
+        """
+        初始化 页面管理器
+        :return:
+        """
         self.page_manager = PageManager(self)
 
     def get_size(self):
@@ -199,39 +201,45 @@ class Container:
     def init_page(self):
         pass
 
-    def get_page(self,page_num:int,management_page:bool = False):
-        from store.page import LoggablePage,CommonPage
-        if page_num in self.cache:
-            return self.cache[page_num]
-        page_data = bytearray()
-        self.read_page(page_num, page_data)
-        if management_page:
-            if self.log:
-                page = LoggableManagement(page_num, page_data)
+    def get_or_create_manage_page(self,page_num:int):
+        with self._lock:
+            if page_num in self.cache:
+                return self.cache[page_num]
+            page_data = bytearray()
+            self.read_page(page_num, page_data)
+            page = ManagementPage(page_num,page_data)
+            page.set_container(self)
+            page.init()
+            self.cache[page_num] = page
+            return page
+
+    def get_page(self,page_num:int):
+        from store.page import CommonPage
+        with self._lock:
+            if page_num in self.cache:
+                return self.cache[page_num]
+            page_data = bytearray()
+            self.read_page(page_num, page_data)
+            page_type = log_struct.unpack_from('<b',page_data,0)[0]
+            if page_type == MANAGEMENT_PAGE:
+                    page = ManagementPage(page_num,page_data)
             else:
-                page = ManagementPage(page_num,page_data)
-        else:
-            if self.log:
-                page = LoggablePage(page_num, page_data)
-            else:
-                page = CommonPage(page_num, page_data)
-        page.set_container(self)
-        self.cache[page_num] = page
-        return page
+                    page = CommonPage(page_num, page_data)
+            page.set_container(self)
+            page.init()
+            self.cache[page_num] = page
+            return page
 
     def new_common_page(self,is_over_flow:bool = False):
-        from store.page import CommonPage,LoggablePage
+        from store.page import CommonPage
         page_data = bytearray(config.PAGE_SIZE)
         page_num = self.page_manager.alloc_page()
-        if self.log:
-            page = LoggablePage(page_num, page_data)
-        else:
-            page = CommonPage(page_num,page_data)
+        page = CommonPage(page_num,page_data)
         page.set_container(self)
         if is_over_flow:
-            page.init_page(is_over_flow=True)
+            page.init_page_header(is_over_flow=True)
         else:
-            page.init_page(is_over_flow=False)
+            page.init_page_header(is_over_flow=False)
         self.cache[page_num] = page
         return page
 
@@ -248,4 +256,16 @@ class Container:
         for k, v in self.cache.items():
             if v.dirty:
                 self.write_page(k,v.page_data)
+                v.dirty = False
         self.file.flush()
+
+    @staticmethod
+    def open_container(container_name: str | None = None, log:bool = True):
+        container = Container(container_name,log)
+        container.init()
+        return container
+    @staticmethod
+    def open_container_by_id(container_id: int | None = None, log:bool = True):
+        container_name = config.get_container_name(container_id)
+        return Container.open_container(container_name, log)
+

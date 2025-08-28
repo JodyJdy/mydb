@@ -40,13 +40,13 @@ class RotatingLogger:
         self.buffer = io.BytesIO()
         self.buffer_bytes = 0
         self.lock = threading.Lock()
+        #当前在写的文件，由于是顺序写，这个一定是编号最大的文件
         self.current_num = self._find_latest_log_number()
 
         if self.current_num == -1:
             self.current_num = 0
 
         #最大日志文件数
-        self.max_file_num = self.current_num
 
         #创建当前写的文件
         self.current_file = None
@@ -110,7 +110,7 @@ class RotatingLogger:
 
     def write_offset(self):
         """本次写入的偏移位置"""
-        return self.current_num * self.max_size + self.buffer_bytes
+        return self.current_num * self.max_size + self.buffer_bytes + self.current_file.tell()
 
     def write(self, data):
         msg_size = len(data)
@@ -188,7 +188,7 @@ class RotatingLogger:
                 need_read_size -= readable_size
                 cur_num += 1
                 file_pos = 0
-                if cur_num > self.max_file_num:
+                if cur_num > self.current_num:
                     raise Exception("文件读取越界")
                 cur_file = self.get_read_log_file(cur_num)
                 cur_file.seek(file_pos)

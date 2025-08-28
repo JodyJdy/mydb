@@ -344,7 +344,7 @@ class BTree:
         #记录
         config.add_container(btree.name)
         #page 1 总是存放 btree的信息
-        container = Container(btree.name)
+        container = Container.open_container(btree.name)
         btree_info_page = container.new_common_page(is_over_flow=False)
         #创建根节点
         root_page = container.new_common_page()
@@ -360,7 +360,7 @@ class BTree:
     def open_btree(name:str):
         if not config.container_exists(name):
             raise Exception(f'btree {name} not exists')
-        container = Container(name)
+        container = Container.open_container(name)
         #page 1 总是存放 btree的信息, page 0 是container的页码管理页
         btree_info_page = container.get_page(config.BTREE_INFO_PAGE_NUM)
         btree_info = BTreeInfo.parse_record(btree_info_page.read_slot(0))
@@ -368,7 +368,7 @@ class BTree:
 
 
     def __init__(self, btree_info:BTreeInfo):
-        self.container = Container(btree_info.name)
+        self.container = Container.open_container(btree_info.name)
         self.tree = self.read_node(btree_info.root)
         self.key_len = btree_info.key_len
         self.value_type = btree_info.value_types
