@@ -335,17 +335,23 @@ class CommonPage(BasePage):
 
     def set_lsn(self, lsn):
         super().set_lsn(lsn)
-        #写入 page_data !!!!! 配合binlog使用，不需要记录日志，此处使用普通的struct方法
-        struct.pack_into('<biiiL', self.page_data, 0, self.page_type, self.slot_num, self.next_id,
-                             self.over_flow_page_num,self.lsn)
+        #写入 page_data 的lsn !!!!! 配合binlog使用，不需要记录日志，此处使用普通的struct方法
+        struct.pack_into('<L', self.page_data, self.lsn_offset(),self.lsn)
 
     def sync(self):
-        log_struct.pack_into('<biiiL', self, 0, self.page_type, self.slot_num, self.next_id,
+        log_struct.pack_into(CommonPage.header_fmt(), self, 0, self.page_type, self.slot_num, self.next_id,
                          self.over_flow_page_num,self.lsn)
         self.dirty = True
 
+    def lsn_offset(self):
+        return struct.calcsize(CommonPage.header_fmt()[0:-1])
+
+    @staticmethod
+    def header_fmt():
+        return '<biiiL'
+
     def header_size(self) -> int:
-        return 1 + 4 + 4 + 4 + 8
+        return struct.calcsize(self.header_fmt())
 
     @staticmethod
     def over_flow_field_header():
@@ -360,6 +366,10 @@ class CommonPage(BasePage):
         return 1 + 4
 
     @staticmethod
+    def record_header_fmt():
+        return '<biiii'
+
+    @staticmethod
     def record_header_size() -> int:
         """
              record结构:
@@ -369,7 +379,7 @@ class CommonPage(BasePage):
                   over_flow_page number 4
                   over_flow_page id 4
         """
-        return 1 + 4 + 4 + 4 + 4
+        return struct.calcsize(CommonPage.record_header_fmt())
 
     @staticmethod
     def record_min_size() -> int:
@@ -416,7 +426,7 @@ class CommonPage(BasePage):
     def read_record_header_by_slot(self, slot: int) -> Tuple[int, int, CommonPageRecordHeader]:
         record_offset, record_length = self.read_slot_entry(slot)
         return record_offset, record_length, CommonPageRecordHeader(
-            *log_struct.unpack_from('<biiii', self.page_data, record_offset))
+            *log_struct.unpack_from(CommonPage.record_header_fmt(), self.page_data, record_offset))
 
     def read_record_header_by_record_id(self, record_id: int) -> Tuple[int, int, int, CommonPageRecordHeader]:
         """
@@ -424,7 +434,7 @@ class CommonPage(BasePage):
         """
         slot = self.get_slot_num_by_record_id(record_id)
         record_offset, record_length = self.read_slot_entry(slot)
-        record_header = CommonPageRecordHeader(*log_struct.unpack_from('<biiii', self.page_data, record_offset))
+        record_header = CommonPageRecordHeader(*log_struct.unpack_from(CommonPage.record_header_fmt(), self.page_data, record_offset))
         return record_offset, record_length, slot, record_header
 
     def insert_slot(self, row: Row, slot: int, record_id: int | None = None):
@@ -466,7 +476,7 @@ class CommonPage(BasePage):
                                                field.get_bytes()[write_from:]
                )
                 # 写入 record header
-                log_struct.pack_into('<biiii', cur_page, record_offset_start, SINGLE_PAGE, cur_record_id, 1, -1,
+                log_struct.pack_into(CommonPage.record_header_fmt(), cur_page, record_offset_start, SINGLE_PAGE, cur_record_id, 1, -1,
                                  -1)
                 # 写入 slot table
                 log_struct.pack_into('<ii', cur_page, slot_offset_start, record_offset_start,
@@ -490,7 +500,7 @@ class CommonPage(BasePage):
                 )
                 write_from += cur_page_len
                 # 写入 record header
-                log_struct.pack_into('<biiii', cur_page, record_offset_start, MULTI_PAGE, cur_record_id, 1,
+                log_struct.pack_into(CommonPage.record_header_fmt(), cur_page, record_offset_start, MULTI_PAGE, cur_record_id, 1,
                                  over_page.page_num, over_page_record_id)
                 # 写入 slot table
                 log_struct.pack_into('<ii', cur_page, slot_offset_start, record_offset_start,
@@ -571,9 +581,9 @@ class CommonPage(BasePage):
         if free_space < CommonPage.record_min_size():
             return -1, -1
         slot_offset_start = cal_slot_entry_offset(self.slot_num)
-        # 获取写入数据的偏移
+        # 获取写入record数据的偏移
         record_offset_start = self.header_records_length(free_space)
-        log_struct.pack_into('<biiii', self, record_offset_start, MULTI_PAGE, record_id,
+        log_struct.pack_into(CommonPage.record_header_fmt(), self, record_offset_start, MULTI_PAGE, record_id,
                          0, over_flow_page_num,
                          over_flow_record_id)
         #只写入头部，什么都不写
@@ -624,7 +634,7 @@ class CommonPage(BasePage):
             if wrote_cols + step_wrote_cols < len(row.values):
                 over_page = cur_page.get_over_flow_page(CommonPage.record_min_size())
                 over_record_id = over_page.get_next_record_id()
-                log_struct.pack_into('<biiii', cur_page, record_offset_start, MULTI_PAGE, cur_record_id,
+                log_struct.pack_into(CommonPage.record_header_fmt(), cur_page, record_offset_start, MULTI_PAGE, cur_record_id,
                                  step_wrote_cols, over_page.page_num,
                                  over_record_id)
                 log_struct.pack_into('<ii', cur_page, slot_offset_start, record_offset_start,
@@ -634,7 +644,7 @@ class CommonPage(BasePage):
                 cur_page = over_page
             else:
                 cur_page.increase_slot_num()
-                log_struct.pack_into('<biiii', cur_page, record_offset_start, SINGLE_PAGE, cur_record_id,
+                log_struct.pack_into(CommonPage.record_header_fmt() , cur_page, record_offset_start, SINGLE_PAGE, cur_record_id,
                                  step_wrote_cols, -1,
                                  -1)
                 log_struct.pack_into('<ii', cur_page, slot_offset_start, record_offset_start,
@@ -879,7 +889,7 @@ class CommonPage(BasePage):
             if record_offset is None:
                 return
             #覆盖 record 的状态 over flow 状态
-            log_struct.pack_into('<biiii',cur_page,record_offset,0,0,0,-1,-1)
+            log_struct.pack_into(CommonPage.record_header_fmt(),cur_page,record_offset,0,0,0,-1,-1)
             # 读取field
             field_offset = record_offset + cur_page.record_header_size()
             for i in range(record_header.col_num):

@@ -21,6 +21,13 @@ class CacheablePage:
     def sync(self):
         pass
 
+    def lsn_offset(self)->int:
+        """
+        返回 lsn 字段 在page中的偏移
+        :return:
+        """
+        pass
+
     def set_lsn(self, lsn):
         self.lsn = lsn
 

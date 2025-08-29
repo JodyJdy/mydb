@@ -20,7 +20,11 @@ class ManagementPage(CacheablePage):
     def __init__(self,page_num:int,page_data:bytearray):
         super().__init__(page_num, page_data)
 
-        self.page_type,self.free,self.next_management,self.lsn = log_struct.unpack_from('<biiL',page_data,0)
+        self.page_type,self.free,self.next_management,self.lsn = log_struct.unpack_from(ManagementPage.header_fmt(),page_data,0)
+
+    @staticmethod
+    def header_fmt():
+        return '<biiL'
 
     def init(self):
         #未初始化的管理页面，进行初始化
@@ -29,15 +33,17 @@ class ManagementPage(CacheablePage):
             self.free = ManagementPage.capacity()
             self.write_header()  # 初始元数据
 
+    def lsn_offset(self) -> int:
+        return struct.calcsize(ManagementPage.header_fmt()[0:-1])
 
     def set_lsn(self, lsn):
         super().set_lsn(lsn)
         #写入 page_data !!!!! 配合binlog使用，不需要记录日志，此处使用普通的struct方法
-        struct.pack_into('<biiL',self.page_data,0, self.page_type, self.free, self.next_management,self.lsn)
+        struct.pack_into('<L',self.page_data,self.lsn_offset(),self.lsn)
 
     def write_header(self):
         self.dirty = True
-        log_struct.pack_into('<biiL',self,0, self.page_type, self.free, self.next_management,self.lsn)
+        log_struct.pack_into(ManagementPage.header_fmt(),self,0, self.page_type, self.free, self.next_management,self.lsn)
 
     def set_bit(self, bit_pos):
         self.dirty = True
@@ -75,7 +81,7 @@ class ManagementPage(CacheablePage):
 
     @staticmethod
     def header_size()->int:
-        return  1 + 4 + 4 + 8
+        return struct.calcsize(ManagementPage.header_fmt())
 
     @staticmethod
     def capacity():
