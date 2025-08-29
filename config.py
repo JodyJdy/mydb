@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-# 页的大小 min page size=173 所有btree中的页全部不存放数据的极端情况
+# 页的大小 min page size=173 所有btree中的页全部不存放数据的极端情况,页面大小配置不能超过 32KB
 PAGE_SIZE = 200
 # btree信息存放的页
 BTREE_INFO_PAGE_NUM = 1

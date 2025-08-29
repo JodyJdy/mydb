@@ -47,13 +47,13 @@ class PhysicalPageLogEntry(LogEntry):
 
     @staticmethod
     def header_fmt():
-       return "<HII"
+       return "<HIH"
     @staticmethod
     def header_size():
        return struct.calcsize(PhysicalPageLogEntry.header_fmt())
 
     @staticmethod
-    def deserialize(entry_bytes):
+    def deserialize(entry_bytes)->LogEntry:
         container_id,page_id,offset = struct.unpack_from(PhysicalPageLogEntry.header_fmt(), entry_bytes, 0)
         data= entry_bytes[PhysicalPageLogEntry.header_size():]
         return PhysicalPageLogEntry(container_id,page_id,offset,data)
@@ -64,29 +64,41 @@ class BinLog:
         self.lock = threading.Lock()
         self.logger = RotatingLogger("binlog",config.LOG_FILE_PER_SIZE,config.LOG_BUFFER_SIZE)
 
+    @staticmethod
+    def size_fmt():
+        """
+        记录 log entry size 的fmt,使用2字节，最大 65535， 由于 包含 undo log， 所以页面大小不能超过 65535/2 约等于 == 32KB
+        :return:
+        """
+        return "<H"
+    @staticmethod
+    def size_length():
+        return struct.calcsize(BinLog.size_fmt())
+
+
     def write_log_entry(self,log_entry:LogEntry):
         byte_content = log_entry.serialize()
         size = len(byte_content)
         with self.lock:
             offset = self.logger.write_offset()
-            self.logger.write(struct.pack("<I",size))
+            self.logger.write(struct.pack(BinLog.size_fmt(),size))
             self.logger.write(byte_content)
         return offset
 
     def read_single_log_entry(self,offset):
-        size = struct.unpack_from("<I",self.logger.read(offset,4),0)[0]
-        entry = PhysicalPageLogEntry.deserialize(self.logger.read(offset + 4,size))
+        size = struct.unpack_from(BinLog.size_fmt(),self.logger.read(offset,BinLog.size_length()),0)[0]
+        entry = PhysicalPageLogEntry.deserialize(self.logger.read(offset + BinLog.size_length(),size))
         entry.set_entry_pos(offset)
         return entry
 
     def read_log_entry(self,offset):
         end_pos = self.log_end_pos()
         while offset < end_pos:
-            size = struct.unpack_from("<I",self.logger.read(offset,4),0)[0]
-            entry = PhysicalPageLogEntry.deserialize(self.logger.read(offset + 4,size))
+            size = struct.unpack_from(BinLog.size_fmt(),self.logger.read(offset,BinLog.size_length()),0)[0]
+            entry = PhysicalPageLogEntry.deserialize(self.logger.read(offset + BinLog.size_length(),size))
             entry.set_entry_pos(offset)
             yield entry
-            offset+=4
+            offset+=BinLog.size_length()
             offset+=size
 
     def log_end_pos(self):
