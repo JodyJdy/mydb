@@ -320,7 +320,7 @@ class CommonPage(BasePage):
         如果不over，flow:
         fieldLength 4 fieldData
         如果over flow
-        fieldLength over_flow page_number  over_flow_record id   12
+        fieldLength over_flow page_number,  over_flow_record id, 12  fieldData
         如果null,长度依然保留，后续可能会更改内容
      <slot table>
       slot 偏移量  4
@@ -802,8 +802,10 @@ class CommonPage(BasePage):
             self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                         -(field.field_length - space_use))
             if field.status == FIELD_OVER_FLOW:
-                # 删除多余的内容
-                self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
+                # 删除多余的内容; FIELD_OVER_FLOW会预留over_flow_page,over_flow_record，但是不一定使用到
+                #所以会有 over_flow_page为-1的情况
+                if field.over_flow_page and field.over_flow_page != -1:
+                    self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
                 self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                             -(field.field_length - space_use) - CommonPage.over_flow_field_data_size())
                 # 需要吧over flow的头部也shrink    status fieldLen overflowpage overflow record data 调整为 status fieldLen data
@@ -819,7 +821,7 @@ class CommonPage(BasePage):
                                        value.get_bytes()[:field.field_length]
        )
         # 删除field over flow多余部分，重新写入
-        if  field.over_flow_page != -1:
+        if  field.over_flow_page and  field.over_flow_page != -1:
             self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
         over_flow_page = self.get_over_flow_page(CommonPage.record_min_size() + CommonPage.over_flow_field_header())
         over_flow_record_id = over_flow_page.get_next_record_id()
