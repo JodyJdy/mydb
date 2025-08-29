@@ -816,8 +816,8 @@ class CommonPage(BasePage):
             return
         # 不能在当页放下，一定是 over flow,能放多少放多少
         log_struct.set_page_range_data(page,
-                                       field.offset + CommonPage.field_header_length(),
-                                       field.offset + CommonPage.field_header_length() + field.field_length,
+                                       field.offset + CommonPage.over_flow_field_header(),
+                                       field.offset + CommonPage.over_flow_field_header() + field.field_length,
                                        value.get_bytes()[:field.field_length]
        )
         # 删除field over flow多余部分，重新写入
