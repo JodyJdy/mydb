@@ -725,13 +725,15 @@ class CommonPage(BasePage):
                     status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
                     field = Field(status, cur_page.page_num, field_offset, field_length)
                     field_offset += cur_page.field_header_length()
-                    if status == FIELD_OVER_FLOW:
+                    if status == FIELD_OVER_FLOW :
                         next_page_num, next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
                         field.over_flow_page = next_page_num
                         field.over_flow_record = next_record_id
                         # 跳过over flow部分
                         field_offset += self.over_flow_field_data_size()
                         field_offset += field_length
+                    elif status == FIELD_OVER_FLOW_NULL:
+                        field_offset += self.over_flow_field_data_size()
                     else:
                         field_offset += field_length
                     # 读取到field头部
@@ -856,8 +858,10 @@ class CommonPage(BasePage):
                 field = Field(status, cur_page.page_num, field_offset, field_length)
                 fields_list.append(field)
                 field_offset += cur_page.field_header_length()
-                if status == FIELD_OVER_FLOW_NULL or status == FIELD_NOT_OVER_FLOW_NULL:
+                if status == FIELD_NOT_OVER_FLOW_NULL :
                     field_offset += field_length
+                elif status == FIELD_OVER_FLOW_NULL:
+                    field_offset += self.over_flow_field_data_size()
                 elif status == FIELD_NOT_OVER_FLOW:
                     # 读取数据
                     field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
