@@ -766,9 +766,9 @@ class CommonPage(BasePage):
                 # 删除后续数据
                 if  field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
-                log_struct.pack_into('<bi', page, field.offset, FIELD_OVER_FLOW_NULL,0)
+                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW_NULL,0,-1,-1)
             else:
-                log_struct.pack_into('<b', page, field.offset, FIELD_NOT_OVER_FLOW_NULL)
+                log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW_NULL,0)
             return
         space_use = value.space_use()
         if field.is_null():
@@ -793,26 +793,31 @@ class CommonPage(BasePage):
         # 所有值为空的情况都已经处理
         # 可以在当页放下
         if space_use <= field.field_length:
-            log_struct.set_page_range_data(page,
-                                           field.offset + CommonPage.field_header_length(),
-                                           field.offset + CommonPage.field_header_length() + space_use,
-                                           value.get_bytes()
-            )
-            log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW, space_use)
-            self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
-                        -(field.field_length - space_use))
             if field.status == FIELD_OVER_FLOW:
                 # 删除多余的内容; FIELD_OVER_FLOW会预留over_flow_page,over_flow_record，但是不一定使用到
                 #所以会有 over_flow_page为-1的情况
                 if field.over_flow_page and field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
                 self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
-                            -(field.field_length - space_use) - CommonPage.over_flow_field_data_size())
-                # 需要吧over flow的头部也shrink    status fieldLen overflowpage overflow record data 调整为 status fieldLen data
-                self.shrink(field.offset + CommonPage.over_flow_field_header(), -CommonPage.over_flow_field_data_size())
-            else:
-                self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                             -(field.field_length - space_use))
+
+                log_struct.set_page_range_data(page,
+                                               field.offset + CommonPage.over_flow_field_header(),
+                                               field.offset + CommonPage.over_flow_field_header() + space_use,
+                                               value.get_bytes()
+                                               )
+                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW,space_use,-1,-1)
+
+            else:
+                self.shrink(field.offset + field.field_length + CommonPage.field_header_length(),
+                            -(field.field_length - space_use))
+
+                log_struct.set_page_range_data(page,
+                                               field.offset + CommonPage.field_header_length(),
+                                               field.offset + CommonPage.field_header_length() + space_use,
+                                               value.get_bytes()
+                                               )
+                log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW, space_use)
             return
         # 不能在当页放下，一定是 over flow,能放多少放多少
         log_struct.set_page_range_data(page,
