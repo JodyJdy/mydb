@@ -5,7 +5,6 @@ import io
 from pathlib import Path
 
 from typing import Dict, IO
-
 import config
 
 
@@ -59,6 +58,9 @@ class RotatingLogger:
         # 用于缓冲需要读取的文件
         self.file_reader_cache:Dict = {}
 
+        #文件结尾位置
+        self.end_position = self.current_num * self.max_size +  self.current_file.tell()
+
 
     def _find_latest_log_number(self):
         pattern = f"{config.LOG_FILE_PATH}/{self.log_prefix}_*.log"
@@ -108,14 +110,8 @@ class RotatingLogger:
         self.current_num += 1
         self._open_current_file()
 
-    def write_offset(self):
-        """本次写入的偏移位置"""
-        return self.current_num * self.max_size + self.buffer_bytes + self.current_file.tell()
-
     def write(self, data):
         msg_size = len(data)
-
-        offset = self.write_offset()
 
         with self.lock:
             wrote_size = 0
@@ -129,7 +125,8 @@ class RotatingLogger:
                     self._flush_buffer()
                 wrote_size+=step_write
 
-        return offset
+            #对于 end_position的修改是线程安全的
+            self.end_position +=msg_size
 
     def flush(self):
         self._flush_buffer()

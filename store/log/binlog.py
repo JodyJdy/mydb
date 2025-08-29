@@ -80,10 +80,8 @@ class BinLog:
         byte_content = log_entry.serialize()
         size = len(byte_content)
         with self.lock:
-            offset = self.logger.write_offset()
             self.logger.write(struct.pack(BinLog.size_fmt(),size))
             self.logger.write(byte_content)
-        return offset
 
     def read_single_log_entry(self,offset):
         size = struct.unpack_from(BinLog.size_fmt(),self.logger.read(offset,BinLog.size_length()),0)[0]
@@ -102,7 +100,7 @@ class BinLog:
             offset+=size
 
     def log_end_pos(self):
-        return self.logger.write_offset() + self.logger.current_num * config.LOG_FILE_PER_SIZE
+        return self.logger.end_position
 
     def flush(self):
         self.logger.flush()
