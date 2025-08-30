@@ -916,6 +916,8 @@ class CommonPage(BasePage):
                             wait_deleted.append((next_page_num, next_record_id))
                     field_offset += field_length
                     field_offset += 4 + 4
+                elif status == FIELD_OVER_FLOW_NULL:
+                    field_offset+=CommonPage.over_flow_field_data_size()
                 else:
                     field_offset += field_length
             # 需要调整偏移量
