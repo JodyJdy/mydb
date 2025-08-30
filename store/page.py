@@ -147,8 +147,8 @@ class BasePage(CacheablePage):
             raise Exception('page溢出')
         content_len = self.header_records_length(free_space)
         log_struct.set_page_range_data(self,offset_start + shrink_bytes,content_len + shrink_bytes,
-            self.page_data[offset_start:content_len]
-        )
+                                       self.page_data[offset_start:content_len]
+                                       )
 
         # 调整slot的偏移量
         for slot, record_offset in shrink_slot:
@@ -768,9 +768,9 @@ class CommonPage(BasePage):
                 # 删除后续数据
                 if  field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
-                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW_NULL,0,-1,-1)
+                log_struct.pack_into('<bi', page, field.offset, FIELD_OVER_FLOW_NULL,0)
             else:
-                log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW_NULL,0)
+                log_struct.pack_into('<b', page, field.offset, FIELD_NOT_OVER_FLOW_NULL)
             return
         space_use = value.space_use()
         if field.is_null():
@@ -800,7 +800,7 @@ class CommonPage(BasePage):
                 #所以会有 over_flow_page为-1的情况
                 if field.over_flow_page and field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
-                self.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
+                page.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
                             -(field.field_length - space_use))
 
                 log_struct.set_page_range_data(page,
@@ -811,7 +811,7 @@ class CommonPage(BasePage):
                 log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW,space_use,-1,-1)
 
             else:
-                self.shrink(field.offset + field.field_length + CommonPage.field_header_length(),
+                page.shrink(field.offset + field.field_length + CommonPage.field_header_length(),
                             -(field.field_length - space_use))
 
                 log_struct.set_page_range_data(page,
