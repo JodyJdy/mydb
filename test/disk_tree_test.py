@@ -167,4 +167,34 @@ def test_tree3():
     t.container.flush()
     t.container.close()
 
-test_tree3()
+
+#
+def test_tree4():
+    info = BTreeInfo("my_tree4",-1,1,False,[IntValue
+        ,StrValue,StrValue,StrValue,StrValue,StrValue,StrValue
+                                            ]
+                     )
+    BTree.create_btree(info,True)
+    t = BTree.open_btree("my_tree4")
+    # print(t.search(generate_row([1])).get_row_i(0))
+
+    for i in range(1000):
+        t.insert(generate_row([i,
+                               "hello","hello","hello","hello","hello","hello",
+                               ]))
+
+    for i in range(1000):
+        t.insert(generate_row([i,
+                               "hello"*100,
+                               "hello"*100,
+                               "hello"*100,
+                               "hello"*200,
+                               "hello"*200,
+                               "hello"*200,
+                               ]))
+
+    for i in range(300,800):
+        t.delete(generate_row([i]))
+    test_count(t)
+    t.container.flush()
+    t.container.close()
