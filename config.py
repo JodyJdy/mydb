@@ -11,6 +11,11 @@ CONTAINER_PATH =  Path(__file__).parent / "data"
 # meta path
 META_PATH = Path(__file__).parent / "data"/"meta.json"
 
+
+OPEN_BINLOG = False
+
+
+
 def create_container_if_need(container_name: str):
     container_path = Path(CONTAINER_PATH)
     if not container_path.exists():
