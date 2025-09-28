@@ -2,7 +2,28 @@ import struct
 import typing
 from abc import abstractmethod
 
+from enum import Enum
 from typing import List, Any, Dict, Callable
+
+
+
+class  ValueType(Enum):
+    """
+    支持的数据类型的枚举
+    """
+    BYTE_ARRAY=  0
+    STR = 1
+    SHORT = 2
+    Int = 3
+    LONG = 4
+    BOOL = 5
+    INT_ARRAY = 6
+
+    @staticmethod
+    def from_int(i:int):
+        return ValueType(i)
+
+
 
 class Value:
     def __init__(self):
@@ -37,7 +58,7 @@ class Value:
 
 
     @staticmethod
-    def type_enum()->int:
+    def type_enum()->ValueType:
         """
         类型的枚举值
         :return:
@@ -74,8 +95,8 @@ class ByteArray(Value):
         return ByteArray(value)
 
     @staticmethod
-    def type_enum() -> int:
-        return 0
+    def type_enum() -> ValueType:
+        return ValueType.BYTE_ARRAY
 
 
 class StrValue(Value):
@@ -95,8 +116,8 @@ class StrValue(Value):
             return None
         return StrValue(value.decode('utf8'))
     @staticmethod
-    def type_enum() -> int:
-        return 1
+    def type_enum() -> ValueType:
+        return ValueType.STR
 
     def len_variable(self):
         return True
@@ -119,11 +140,11 @@ class StrValue(Value):
     def __repr__(self):
         return f"str:{self.value}"
 
-def int_to_bytes(num,size):
+def int_to_bytes(num,size,signed = True):
     if num == 0:
         return b'\x00' * size
     # size = math.ceil(num.bit_length() / 8)
-    return num.to_bytes(size, byteorder='little', signed=True)
+    return num.to_bytes(size, byteorder='little', signed=signed)
 
 class ShortValue(Value):
     """
@@ -150,8 +171,8 @@ class ShortValue(Value):
         return IntValue(int.from_bytes(value, byteorder='little', signed=True))
 
     @staticmethod
-    def type_enum() -> int:
-        return 2
+    def type_enum() -> ValueType:
+        return ValueType.SHORT
     def __repr__(self):
         return f"short:{self.value}"
 
@@ -172,8 +193,8 @@ class IntValue(Value):
         if not is_null:
             self.bytes_content = int_to_bytes(value,4)
     @staticmethod
-    def type_enum() -> int:
-        return 3
+    def type_enum() -> ValueType:
+        return ValueType.Int
 
     @staticmethod
     def none():
@@ -205,8 +226,8 @@ class LongValue(Value):
         return f'long:{self.value}'
 
     @staticmethod
-    def type_enum() -> int:
-        return 4
+    def type_enum() -> ValueType:
+        return ValueType.LONG
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
         return LongValue(int.from_bytes(value, byteorder='little', signed=True))
@@ -235,8 +256,8 @@ class BoolValue(Value):
         return f'long:{self.value}'
 
     @staticmethod
-    def type_enum() -> int:
-        return 5
+    def type_enum() -> ValueType:
+        return ValueType.BOOL
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
@@ -244,6 +265,64 @@ class BoolValue(Value):
     @staticmethod
     def none():
         return BoolValue(None,is_null=True)
+
+
+
+
+class IntArrayValue(Value):
+    """
+        8 字节
+    """
+    def len_variable(self):
+        return True
+
+    def space_use(self):
+        if not self.bytes_content:
+            self.init_result()
+        return len(self.bytes_content)
+
+    def get_bytes(self) -> bytearray:
+        if not self.bytes_content:
+            self.init_result()
+        return self.bytes_content
+
+    def __init__(self,value:List[int]|None):
+        super().__init__()
+        self.value = value
+        self.is_null = value is None
+    def __repr__(self):
+        return f'int array:{self.value}'
+
+    def init_result(self):
+        self.bytes_content = bytearray()
+        if self.value:
+            array_len =len(self.value)
+            #写入数组长度
+            self.bytes_content.extend(int_to_bytes(array_len,4,False))
+            #写入数组内容
+            for val in self.value:
+                self.bytes_content.extend(int_to_bytes(val,4))
+
+    @staticmethod
+    def type_enum() -> ValueType:
+        return ValueType.INT_ARRAY
+
+    @staticmethod
+    def from_bytes(value:bytearray)->Value|None:
+        if not value:
+            return None
+        offset = 0
+        #读取数组长度
+        array_len = struct.unpack('<I',value[offset:offset+4])[0]
+        offset += 4
+        int_array = []
+        for i in range(array_len):
+            int_array.append(struct.unpack('<i',value[offset:offset+4])[0])
+            offset += 4
+        return IntArrayValue(int_array)
+    @staticmethod
+    def none():
+        return IntArrayValue(None)
 
 
 class Row:
@@ -325,14 +404,12 @@ def generate_row(v:List[int|str|bytearray])->Row:
     return Row(values)
 
 
-value_type_dict: Dict[int, typing.Type[Value]] = {
-    ByteArray.type_enum(): ByteArray,
-    StrValue.type_enum(): StrValue,
-    ShortValue.type_enum(): ShortValue,
-    IntValue.type_enum(): IntValue,
-    LongValue.type_enum(): LongValue,
-    BoolValue.type_enum(): BoolValue,
-}
+def init_value_type_dict():
+    for clazz in Value.__subclasses__():
+        value_type_dict[clazz.type_enum()] = clazz
+
+value_type_dict: Dict[ValueType, typing.Type[Value]] = {}
+init_value_type_dict()
 
 def serialization_value(v:Value)->bytearray:
     """

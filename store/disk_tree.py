@@ -7,7 +7,7 @@ import config
 from store.container import Container
 from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
 from store.values import StrValue, BoolValue, value_type_dict
-from store.values import Row, generate_row, IntValue, Value
+from store.values import Row, generate_row, IntValue, Value,ValueType
 
 
 # 叶子/分支节点都包含的信息
@@ -322,7 +322,7 @@ class BTreeInfo:
                     IntValue(self.root)
                     ]
         for value_type in self.value_types:
-            row_list.append(IntValue(value_type.type_enum()))
+            row_list.append(IntValue(value_type.type_enum().value))
         return Row(row_list)
     @staticmethod
     def parse_record(record:Record):
@@ -332,7 +332,7 @@ class BTreeInfo:
         root = IntValue.from_bytes(record.fields[3].value).value
         value_types: List[typing.Type[Value]] = []
         for field in record.fields[4:]:
-            value_types.append(value_type_dict[IntValue.from_bytes(field.value).value])
+            value_types.append(value_type_dict[ValueType(IntValue.from_bytes(field.value).value)])
         return BTreeInfo(name,root,key_len,duplicate_key,value_types)
 
 class BTree:
