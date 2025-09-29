@@ -690,6 +690,29 @@ class CommonPage(BasePage):
         slot = self.get_slot_num_by_record_id(record_id)
         return self.read_slot(slot)
 
+    def read_over_flow_field_header(self, next_page_num: int, next_record_id: int)->List[Field]:
+        """
+        读取一个over flow field “后续” 的所有Field
+
+        """
+        cur_page = self.container.get_page(next_page_num)
+        cur_slot = cur_page.get_slot_num_by_record_id(next_record_id)
+        result:List[Field] = []
+        while True:
+            record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
+            field_offset = record_offset + cur_page.record_header_size()
+            status, field_space_use,field_data_length,temp_next_page_num,temp_next_record_id = log_struct.unpack_from('<bHHii', cur_page.page_data, field_offset)
+
+            result.append(Field(status,cur_page.page_num,field_offset,field_space_use,field_data_length))
+            field_offset += cur_page.field_header_length()
+            field_offset += self.over_flow_field_data_size()
+            #读取数据之后再判断是否需要退出
+            if temp_next_page_num == -1:
+                break
+            cur_page = self.container.get_page(temp_next_page_num)
+            cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
+        return result
+
     def read_over_flow_field(self, next_page_num: int, next_record_id: int, field: Field):
         """
         over field 占用的record只会有一个col
@@ -714,9 +737,11 @@ class CommonPage(BasePage):
                 # 跳过over flow部分
                 field_offset += self.over_flow_field_data_size()
                 # 读取数据
-                field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
-                #读取数据之后再判断是否需要推出
-                if temp_next_page_num == -1:
+                if field_data_length != 0:
+                    field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
+                #读取数据之后再判断是否需要退出
+                #如果没有可读的数据，也不再进行读取
+                if temp_next_page_num == -1 or field_data_length == 0:
                         return
                 cur_page = self.container.get_page(temp_next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
