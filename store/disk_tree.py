@@ -7,7 +7,7 @@ import config
 from store.container import Container
 from store.page import Record, CommonPage, SLOT_TABLE_ENTRY_SIZE
 from store.values import StrValue, BoolValue, value_type_dict
-from store.values import Row, generate_row, IntValue, Value,ValueType
+from store.values import Row, generate_row, IntValue, Value,ValueType,IntArrayValue,ModelBase
 
 
 # 叶子/分支节点都包含的信息
@@ -309,31 +309,52 @@ class BranchNode(Node):
             return False
         return True
 
-class BTreeInfo:
+
+
+class BTreeInfo(ModelBase):
+    """
+    字段的顺序不能和存储的顺序一致
+    name: btree名称
+    key_len   主键的长度
+    duplicate_key  是否支持key重复
+    root 根节点 page
+    value_types 每条record种值的类型
+    """
+    name = StrValue
+    key_len = IntValue
+    duplicate_key = BoolValue
+    root = IntValue
+    value_types = IntArrayValue
+
     def __init__(self,name: str,root:int, key_len: int,  duplicate_key:bool,value_types: List[typing.Type[Value]]):
+        super().__init__()
         self.name:str = name
         self.key_len:int = key_len
         self.duplicate_key:bool = duplicate_key
         self.root = root
-        self.value_types:List[typing.Type[Value]] = value_types
+        #类型的数值表示
+        self.value_types:List[int] = [value_type.type_enum().value for value_type in value_types]
 
-    def to_row(self)->Row:
-        row_list = [StrValue(self.name),IntValue(self.key_len),BoolValue(self.duplicate_key),
-                    IntValue(self.root)
-                    ]
-        for value_type in self.value_types:
-            row_list.append(IntValue(value_type.type_enum().value))
-        return Row(row_list)
+
+
+    @staticmethod
+    def types_int_to_real_type(value_types:List[int])->List[typing.Type[Value]]:
+        real_value_types: List[typing.Type[Value]] = []
+        for type_int in value_types:
+            real_value_types.append(value_type_dict[ValueType(type_int)])
+        return real_value_types
+
+    def generate_real_value_types(self)->List[typing.Type[Value]]:
+        return BTreeInfo.types_int_to_real_type(self.value_types)
+
+    @staticmethod
+    def value_types_converter(value_types:IntArrayValue):
+        return BTreeInfo.types_int_to_real_type(value_types.value)
+
     @staticmethod
     def parse_record(record:Record):
-        name = StrValue.from_bytes(record.fields[0].value).value
-        key_len = IntValue.from_bytes(record.fields[1].value).value
-        duplicate_key = BoolValue.from_bytes(record.fields[2].value).value
-        root = IntValue.from_bytes(record.fields[3].value).value
-        value_types: List[typing.Type[Value]] = []
-        for field in record.fields[4:]:
-            value_types.append(value_type_dict[ValueType(IntValue.from_bytes(field.value).value)])
-        return BTreeInfo(name,root,key_len,duplicate_key,value_types)
+        bytearray_list:List[bytearray] = [field.value for field in record.fields]
+        return BTreeInfo.parse_from_bytes_list(bytearray_list,{"value_types":BTreeInfo.value_types_converter})
 
 class BTree:
 
@@ -374,7 +395,7 @@ class BTree:
         self.container = Container.open_container(btree_info.name)
         self.tree = self.read_node(btree_info.root)
         self.key_len = btree_info.key_len
-        self.value_type = btree_info.value_types
+        self.value_type = btree_info.generate_real_value_types()
         self.duplicate_key = btree_info.duplicate_key
 
     def create_leaf_node(self, parent: int):

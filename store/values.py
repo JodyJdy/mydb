@@ -3,7 +3,7 @@ import typing
 from abc import abstractmethod
 
 from enum import Enum
-from typing import List, Any, Dict, Callable
+from typing import List, Any, Dict, Callable,Type
 
 
 
@@ -66,19 +66,19 @@ class Value:
         pass
 
     @staticmethod
-    def from_bytes(bytes: bytearray):
+    def from_bytes(bytes: bytearray)->Any:
         pass
     @staticmethod
-    def none():
+    def none()->Any:
         pass
     @abstractmethod
     def get_bytes(self)->bytearray:
         pass
 class ByteArray(Value):
-    def __init__(self,value:bytearray,is_null:bool=False):
+    def __init__(self,value:bytearray|None):
         super().__init__()
         self.value = value
-        self.is_null = is_null
+        self.is_null = value is None
 
     def len_variable(self):
         return True
@@ -156,15 +156,15 @@ class ShortValue(Value):
         return 2
     def get_bytes(self) -> bytearray:
         return self.bytes_content
-    def __init__(self,value:int,is_null:bool=False):
+    def __init__(self,value:int|None):
         super().__init__()
         self.value = value
-        self.is_null = is_null
-        if not is_null:
+        self.is_null = value is  None
+        if not self.is_null:
             self.bytes_content = int_to_bytes(value,2)
     @staticmethod
     def none():
-        return ShortValue(None,is_null=True)
+        return ShortValue(None)
 
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
@@ -186,11 +186,11 @@ class IntValue(Value):
         return 4
     def get_bytes(self) -> bytearray:
         return self.bytes_content
-    def __init__(self,value:int,is_null:bool=False):
+    def __init__(self,value:int|None):
         super().__init__()
         self.value = value
-        self.is_null = is_null
-        if not is_null:
+        self.is_null = value is None
+        if  not self.is_null:
             self.bytes_content = int_to_bytes(value,4)
     @staticmethod
     def type_enum() -> ValueType:
@@ -198,7 +198,7 @@ class IntValue(Value):
 
     @staticmethod
     def none():
-        return IntValue(None,is_null=True)
+        return IntValue(None)
     @staticmethod
     def from_bytes(value:bytearray)->Value|None:
         return IntValue(int.from_bytes(value, byteorder='little', signed=True))
@@ -216,11 +216,11 @@ class LongValue(Value):
         return 8
     def get_bytes(self) -> bytearray:
         return self.bytes_content
-    def __init__(self,value:int,is_null:bool=False):
+    def __init__(self,value:int | None):
         super().__init__()
         self.value = value
-        self.is_null = is_null
-        if not is_null:
+        self.is_null = value is None
+        if  not self.is_null:
             self.bytes_content = int_to_bytes(value,8)
     def __repr__(self):
         return f'long:{self.value}'
@@ -233,7 +233,7 @@ class LongValue(Value):
         return LongValue(int.from_bytes(value, byteorder='little', signed=True))
     @staticmethod
     def none():
-        return LongValue(None,is_null=True)
+        return LongValue(None)
 
 class BoolValue(Value):
     """
@@ -245,12 +245,12 @@ class BoolValue(Value):
         return 1
     def get_bytes(self) -> bytearray:
         return self.bytes_content
-    def __init__(self,value:bool,is_null:bool=False):
+    def __init__(self,value:bool | None):
         super().__init__()
         self.value = value
-        self.is_null = is_null
-        if not is_null:
-            self.bytes_content =  bytearray()
+        self.is_null = value is None
+        if not self.is_null:
+            self.bytes_content = bytearray()
             self.bytes_content.extend(struct.pack('<b',self.value))
     def __repr__(self):
         return f'long:{self.value}'
@@ -264,7 +264,7 @@ class BoolValue(Value):
         return BoolValue(struct.unpack('<b',value)[0] == 1)
     @staticmethod
     def none():
-        return BoolValue(None,is_null=True)
+        return BoolValue(None)
 
 
 
@@ -450,3 +450,91 @@ def deserialization_row(v:bytearray)->Row|None:
         pos += value_len
         value_list.append(value)
     return Row(value_list)
+
+
+from collections import OrderedDict
+
+class ModelMetaClass(type):
+    def __new__(cls, name, bases, attr):
+        if name == 'ModelBase':
+            return type.__new__(cls, name, bases, attr)
+
+        #存储 字段->字段类型
+        mappings = OrderedDict()
+        for k,v in attr.items():
+            if isinstance(v,type) and  issubclass(v,Value):
+                mappings[k] = v
+        # attr中的是类属性，实际使用的是实例属性，为了避免冲突，从attr中移除
+        for k in mappings.keys():
+            attr.pop(k)
+        #保存属性和映射之间的关系
+        attr['__mappings__'] = mappings
+        return type.__new__(cls, name, bases, attr)
+
+class ModelBase(dict,metaclass= ModelMetaClass):
+    def __init__(self,**kwargs):
+        super(ModelBase,self).__init__(**kwargs)
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(r"'ModelBase' object has no attribute '%s'" % key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def to_row(self)->Row:
+        return Row(self.to_value_list())
+
+    def to_value_list(self)->List[Value]:
+        values = []
+        for k,v in self.__mappings__.items():
+            if k in self:
+                v:Type[Value]
+                # 调用类的构造函数，实例化 Value对象
+                values.append(v(self.get(k)))
+        return values
+
+    @classmethod
+    def parse_from_bytes_list(cls,bytearray_list:List[bytearray],converter:Dict[str,Callable[[Value],Any]] = None)->Any:
+        if len(bytearray_list) != len(cls.__mappings__.items()):
+            raise Exception('字节数组长度与实例长度不匹配')
+
+        temp_dict = {}
+        for item,bytearray_ in zip(cls.__mappings__.items(),bytearray_list):
+            k,v= item
+            v:Type[Value]
+            #生成Value对象
+            if not bytearray_:
+                value_obj:Value =  v.none()
+            else:
+                value_obj:Value = v.from_bytes(bytearray_)
+
+            #提取Value对象的value
+            if value_obj.is_null:
+                temp_dict[k] = None
+            else:
+                #如果存在converter，需要对值进一步处理
+                if converter and k in converter:
+                    temp_dict[k] = converter[k](value_obj)
+                else:
+                    temp_dict[k] = value_obj.value
+        #初始实例对象
+        return cls(**temp_dict)
+
+
+
+
+
+class ModelExample(ModelBase):
+    a=IntValue
+    b= StrValue
+    def __init__(self, a, b, **kwargs):
+        super().__init__(**kwargs)
+        self.a = a
+        self.b = b
+
+
+
+
