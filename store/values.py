@@ -84,6 +84,8 @@ class ByteArray(Value):
         return True
 
     def space_use(self):
+        if self.is_null:
+            return 0
         return len(self.value)
 
     def get_bytes(self) -> bytearray:
@@ -128,6 +130,8 @@ class StrValue(Value):
             self.bytes_content.extend(self.value.encode('utf-8'))
 
     def space_use(self):
+        if self.is_null:
+            return 0
         if not self.bytes_content:
             self.init_result()
         return len(self.bytes_content)
