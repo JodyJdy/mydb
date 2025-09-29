@@ -710,6 +710,49 @@ class CommonPage(BasePage):
                 cur_page = self.container.get_page(temp_next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
 
+
+    def read_all_field(self, record_id: int)->List[Field]:
+        """
+        读取field的偏移，不读取数据
+        """
+        cur_slot = self.get_slot_num_by_record_id(record_id)
+        cur_page = self
+        record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
+
+        result=  []
+
+        while True:
+            # 读取field
+            field_offset = record_offset + cur_page.record_header_size()
+            # 在当前页，进行读取
+            for i in range(record_header.col_num):
+                status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
+                field = Field(status, cur_page.page_num, field_offset, field_length)
+                field_offset += cur_page.field_header_length()
+                if status == FIELD_OVER_FLOW :
+                    next_page_num, next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
+                    field.over_flow_page = next_page_num
+                    field.over_flow_record = next_record_id
+                    # 跳过over flow部分
+                    field_offset += self.over_flow_field_data_size()
+                    field_offset += field_length
+                elif status == FIELD_OVER_FLOW_NULL:
+                    field_offset += self.over_flow_field_data_size()
+                else:
+                    field_offset += field_length
+                # 读取到field头部
+                result.append(field)
+            # 读取下一页
+            if  record_header.next_page_num != -1:
+                cur_page = self.container.get_page(record_header.next_page_num)
+                cur_slot = cur_page.get_slot_num_by_record_id(record_header.next_record_id)
+                record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
+            else:
+                break
+        return result
+
+
+
     def read_field_by_index(self, record_id: int, field_index: int):
         """
         读取field的偏移，不读取数据
@@ -839,8 +882,13 @@ class CommonPage(BasePage):
         page.write_long_field(value, field.field_length, over_flow_record_id, over_flow_page)
 
     def update_by_record_id(self, row: Row, record_id: int):
-        for i, value in enumerate(row.values):
-            self.update_field_by_index(record_id, i, value)
+        #! !!!! 一定要反向更新，因为每个field在调整时会shrink data，如果正向更新，后续的field的offset会
+        #变化
+        for field,value in zip(reversed(self.read_all_field(record_id)),reversed(row.values)):
+            self.update_field(field, value)
+        # for i, value in enumerate(row.values):
+        #     self.update_field_by_index(record_id, i, value)
+
 
     def update_by_slot(self, row: Row, slot: int):
         record_id = self.get_record_id_by_slot(slot)
