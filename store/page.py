@@ -265,13 +265,14 @@ class CommonPageRecordHeader:
 
 
 class Field:
-    def __init__(self, status: int, page_num: int, offset: int, field_length: int):
+    def __init__(self, status: int, page_num: int, offset: int, field_space_use: int,field_data_length:int):
         self.status = status
         # 字段所处的page
         self.page_num = page_num
         # 字段的偏移
         self.offset = offset
-        self.field_length = field_length
+        self.field_space_use = field_space_use
+        self.field_data_length = field_data_length
         self.value = bytearray()
         self.over_flow_page = None
         self.over_flow_record = None
@@ -295,7 +296,7 @@ class Record:
         self.fields = fields
 
     def __repr__(self):
-        return f'header={self.header},fields={self.fields}'
+        return f'header:{self.header},fields:{self.fields}'
 
 
 class CommonPage(BasePage):
@@ -315,12 +316,13 @@ class CommonPage(BasePage):
       over_flow_page number 4
       over_flow_page id 4
       field1,field2,field3 ....
-    field结构:  fieldLength 表示 field在当页的数据部分的长度， 和slot table中的 record length含义不一样
+    field结构:  fieldSpace 表示 field在当页除了头部和overflow信息占用的空间, fieldDataLength 则是数据部分的长度 fieldSpace> = fieldDataLength
+       和slot table中的 record length含义不一样
         status: 1  字段状态
         如果不over，flow:
-        fieldLength 4 fieldData
+        fieldSpace 2  fieldDataLength 2   fieldData
         如果over flow
-        fieldLength over_flow page_number,  over_flow_record id, 12  fieldData
+        fieldSpace 2  fieldDataLength 2  over_flow page_number 4   over_flow_record id 4  fieldData
         如果null,长度依然保留，后续可能会更改内容
      <slot table>
       slot 偏移量  4
@@ -360,10 +362,10 @@ class CommonPage(BasePage):
     @staticmethod
     def field_header_length():
         """
-         status fieldLength
+         status fieldSpace fieldDataLength
         :return:
         """
-        return 1 + 4
+        return 1 + 2 + 2
 
     @staticmethod
     def record_header_fmt():
@@ -467,8 +469,8 @@ class CommonPage(BasePage):
             # 写入field
             # 1. 本次可以完全写完
             if field_length + CommonPage.field_header_length() <= free_space:
-                # 写入数据部分
-                log_struct.pack_into('<bi', cur_page, field_write_offset, FIELD_NOT_OVER_FLOW, field_length)
+                # 写入数据部分, field_space_use和field_data_length保持一致
+                log_struct.pack_into('<bHH', cur_page, field_write_offset, FIELD_NOT_OVER_FLOW, field_length,field_length)
 
                 log_struct.set_page_range_data(cur_page,
                                                field_write_offset + CommonPage.field_header_length(),
@@ -490,7 +492,7 @@ class CommonPage(BasePage):
                 over_page = cur_page.get_over_flow_page(
                     CommonPage.record_min_size() + CommonPage.field_header_length() + min(cur_page_len, 10))
                 over_page_record_id = over_page.get_next_record_id()
-                log_struct.pack_into('<biii', cur_page, field_write_offset, FIELD_OVER_FLOW, cur_page_len,
+                log_struct.pack_into('<bHHii', cur_page, field_write_offset, FIELD_OVER_FLOW, cur_page_len,cur_page_len,
                                  over_page.page_num, over_page_record_id)
 
                 log_struct.set_page_range_data(cur_page,
@@ -512,34 +514,41 @@ class CommonPage(BasePage):
 
     def write_field(self, field: Value, page, free_space: int, write_offset: int):
         """
+        field_length 表示在整个field 占据的空间 包括头部
+        field_space_use field全部数据部分占据的空间，存在未使用的情况
+        field_data_length  field 使用的数据存放的空间
+        例如原先数据是: "hello"
+           field_space_use ==  field_data_length = 5
+           当 "hello"  -> "hel"是时，并不释放空间
+           field_space_use ==  5, field_data_length == 3
         """
         status = get_value_status(field)
         if field.is_null:
             # 预留一个 over flow的空间
             if field.len_variable():
                 #over flow null 数据部分长度是0
-                field_data_length = 0
+                field_space_use = field_data_length = 0
                 field_length = CommonPage.over_flow_field_data_size()
             else:
-                field_data_length = field_length = field.space_use()
+                field_space_use = field_data_length = field_length = field.space_use()
             if field_length + CommonPage.field_header_length() > free_space:
                 return -1
             # 可以写入
-            log_struct.pack_into('<bi', page, write_offset, status, field_data_length)
+            log_struct.pack_into('<bHH', page, write_offset, status,field_space_use, field_data_length)
             return CommonPage.field_header_length() + field_length
         else:
-            field_data_length = field.space_use()
+            field_space_use = field_data_length = field.space_use()
             # 当页全部放得下，且不是over flow数据类型
             if not field.len_variable() and field_data_length + CommonPage.field_header_length() <= free_space:
                 # 写入数据部分
-                log_struct.pack_into('<bi', page, write_offset, FIELD_NOT_OVER_FLOW, field_data_length)
+                log_struct.pack_into('<bHH', page, write_offset, FIELD_NOT_OVER_FLOW, field_space_use,field_data_length)
                 log_struct.set_page_range_data(page,
                                                write_offset + CommonPage.field_header_length(),
                                                write_offset + CommonPage.field_header_length() + field_data_length,
                                                field.get_bytes()
                                                )
                 return CommonPage.field_header_length() + field_data_length
-            # 当页不能写完,只能写入一部分,剩下的需要over flow
+            # 当页不能写完,只能写入一部分,或者本身就是over flow 类型，需要over flow
             else:
                 # 连over flow空间都没有，直接结束
                 if free_space < CommonPage.over_flow_field_header():
@@ -551,7 +560,7 @@ class CommonPage(BasePage):
                     over_page = page.get_over_flow_page(
                         CommonPage.record_min_size() + CommonPage.field_header_length() + min(cur_page_len, 10))
                     over_page_record_id = over_page.get_next_record_id()
-                    log_struct.pack_into('<biii', page, write_offset, FIELD_OVER_FLOW, cur_page_len,
+                    log_struct.pack_into('<bHHii', page, write_offset, FIELD_OVER_FLOW, cur_page_len,cur_page_len,
                                          over_page.page_num, over_page_record_id)
 
                     log_struct.set_page_range_data(page,
@@ -565,7 +574,7 @@ class CommonPage(BasePage):
                     return cur_page_len + CommonPage.over_flow_field_header()
                 else:
                     #要留下over flow 的位置
-                    log_struct.pack_into('<biii', page, write_offset, FIELD_OVER_FLOW, field_data_length,-1, -1)
+                    log_struct.pack_into('<bHHii', page, write_offset, FIELD_OVER_FLOW, field_space_use,field_data_length,-1, -1)
 
                     log_struct.set_page_range_data(page,
                                                    write_offset + CommonPage.over_flow_field_header(),
@@ -632,7 +641,7 @@ class CommonPage(BasePage):
                 free_space -= write_len
                 field_write_offset += write_len
                 step_wrote_cols += 1
-            # 当页写完
+            # 当页没有写完,record需要多个页来存储
             if wrote_cols + step_wrote_cols < len(row.values):
                 over_page = cur_page.get_over_flow_page(CommonPage.record_min_size())
                 over_record_id = over_page.get_next_record_id()
@@ -644,6 +653,7 @@ class CommonPage(BasePage):
                 cur_page.increase_slot_num()
                 cur_record_id = over_record_id
                 cur_page = over_page
+            #当页写完了
             else:
                 cur_page.increase_slot_num()
                 log_struct.pack_into(CommonPage.record_header_fmt() , cur_page, record_offset_start, SINGLE_PAGE, cur_record_id,
@@ -693,11 +703,11 @@ class CommonPage(BasePage):
         while True:
             record_offset, _, record_header = cur_page.read_record_header_by_slot(cur_slot)
             field_offset = record_offset + cur_page.record_header_size()
-            status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
+            status, field_space_use,field_data_length = log_struct.unpack_from('<bHH', cur_page.page_data, field_offset)
             field_offset += cur_page.field_header_length()
             if status == FIELD_NOT_OVER_FLOW:
                 # 读取结束
-                field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
+                field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
                 return
             else:
                 temp_next_page_num, temp_next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
@@ -706,7 +716,7 @@ class CommonPage(BasePage):
                 # 跳过over flow部分
                 field_offset += self.over_flow_field_data_size()
                 # 读取数据
-                field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
+                field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
                 cur_page = self.container.get_page(temp_next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
 
@@ -726,8 +736,8 @@ class CommonPage(BasePage):
             field_offset = record_offset + cur_page.record_header_size()
             # 在当前页，进行读取
             for i in range(record_header.col_num):
-                status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
-                field = Field(status, cur_page.page_num, field_offset, field_length)
+                status, field_space_use,field_data_length = log_struct.unpack_from('<bHH', cur_page.page_data, field_offset)
+                field = Field(status, cur_page.page_num, field_offset, field_space_use,field_data_length)
                 field_offset += cur_page.field_header_length()
                 if status == FIELD_OVER_FLOW :
                     next_page_num, next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
@@ -735,11 +745,12 @@ class CommonPage(BasePage):
                     field.over_flow_record = next_record_id
                     # 跳过over flow部分
                     field_offset += self.over_flow_field_data_size()
-                    field_offset += field_length
+                    field_offset += field_space_use
                 elif status == FIELD_OVER_FLOW_NULL:
                     field_offset += self.over_flow_field_data_size()
+                    field_offset += field_space_use
                 else:
-                    field_offset += field_length
+                    field_offset += field_space_use
                 # 读取到field头部
                 result.append(field)
             # 读取下一页
@@ -767,8 +778,8 @@ class CommonPage(BasePage):
             # 在当前页，进行读取
             if index + record_header.col_num > field_index:
                 for i in range(record_header.col_num):
-                    status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
-                    field = Field(status, cur_page.page_num, field_offset, field_length)
+                    status, field_space_use,field_data_length = log_struct.unpack_from('<bHH', cur_page.page_data, field_offset)
+                    field = Field(status, cur_page.page_num, field_offset, field_space_use,field_data_length)
                     field_offset += cur_page.field_header_length()
                     if status == FIELD_OVER_FLOW :
                         next_page_num, next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
@@ -776,11 +787,12 @@ class CommonPage(BasePage):
                         field.over_flow_record = next_record_id
                         # 跳过over flow部分
                         field_offset += self.over_flow_field_data_size()
-                        field_offset += field_length
+                        field_offset += field_space_use
                     elif status == FIELD_OVER_FLOW_NULL:
                         field_offset += self.over_flow_field_data_size()
+                        field_offset += field_space_use
                     else:
-                        field_offset += field_length
+                        field_offset += field_space_use
                     # 读取到field头部
                     if index + i == field_index:
                         return field
@@ -806,80 +818,97 @@ class CommonPage(BasePage):
         if value.is_null:
             if field.is_null():
                 return
-            # 如果是over flow需要将当页的数据删掉，这里使用了shrink ，将 field_length的数据覆盖住
+            # 如果是over flow不删除当页数据，空间继续占据
             if field.status == FIELD_OVER_FLOW:
-                page.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
-                            -field.field_length)
+                # page.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
+                #             -field.field_length)
                 # 删除后续数据
                 if  field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
-                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW_NULL,0,-1,-1)
+                # field_space_use 不变，field_data_length 设置为0
+                log_struct.pack_into('<bHHii', page, field.offset, FIELD_OVER_FLOW_NULL,field.field_space_use,0,-1,-1)
             else:
                 log_struct.pack_into('<b', page, field.offset, FIELD_NOT_OVER_FLOW_NULL)
             return
-        space_use = value.space_use()
+        field_data_length = value.space_use()
         if field.is_null():
             # 预留了over_flow的空间，直接写入
             if value.len_variable():
-                over_flow_page = self.get_over_flow_page(
-                    CommonPage.record_min_size() + CommonPage.over_flow_field_header())
-                over_flow_record_id = over_flow_page.get_next_record_id()
-                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW, 0, over_flow_page.page_num,
-                                 over_flow_record_id)
-                page.write_long_field(value, 0, over_flow_record_id, over_flow_page)
+                #查看有无空间写入，如果有，当页能写多少写多少
+                #已有空间可以全部写入
+                if field.field_space_use >= field_data_length:
+                    log_struct.set_page_range_data(page,
+                                                   field.offset + CommonPage.over_flow_field_header(),
+                                                   field.offset + CommonPage.over_flow_field_header() + field.field_space_use,
+                                                   value.get_bytes()[0: field_data_length]
+                                                   )
+                    #这里 field_space_use和field_data_length保持一致
+                    log_struct.pack_into('<bHHii', page, field.offset, FIELD_OVER_FLOW, field.field_space_use,field_data_length, -1,
+                                         -1)
+                else:
+                    #写入一部分，剩余的over flow
+                    log_struct.set_page_range_data(page,
+                                                   field.offset + CommonPage.over_flow_field_header(),
+                                                   field.offset + CommonPage.over_flow_field_header() + field.field_space_use,
+                                                   value.get_bytes()[0: field.field_space_use]
+                                                   )
+                    over_flow_page = self.get_over_flow_page(
+                        CommonPage.record_min_size() + CommonPage.over_flow_field_header())
+                    over_flow_record_id = over_flow_page.get_next_record_id()
+
+                    #这里 field_space_use和field_data_length保持一致
+                    log_struct.pack_into('<bHHii', page, field.offset, FIELD_OVER_FLOW, field.field_space_use,field.field_space_use, over_flow_page.page_num,
+                                     over_flow_record_id)
+                    #写入位置从 field.field_space_use开始
+                    page.write_long_field(value, field.field_space_use, over_flow_record_id, over_flow_page)
             # 长度固定，直接写数据
             else:
-                log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW,space_use)
+                log_struct.pack_into('<bHH', page, field.offset, FIELD_NOT_OVER_FLOW,field_data_length,field_data_length)
                 log_struct.set_page_range_data(page,
                                                field.offset + CommonPage.field_header_length(),
-                                               field.offset + CommonPage.field_header_length() + space_use,
+                                               field.offset + CommonPage.field_header_length() + field_data_length,
                                                value.get_bytes()
                )
             return
 
         # 所有值为空的情况都已经处理
         # 可以在当页放下
-        if space_use <= field.field_length:
+        if field_data_length <= field.field_space_use:
             if field.status == FIELD_OVER_FLOW:
                 # 删除多余的内容; FIELD_OVER_FLOW会预留over_flow_page,over_flow_record，但是不一定使用到
                 #所以会有 over_flow_page为-1的情况
                 if field.over_flow_page and field.over_flow_page != -1:
                     self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
-                page.shrink(field.offset + field.field_length + CommonPage.over_flow_field_header(),
-                            -(field.field_length - space_use))
 
                 log_struct.set_page_range_data(page,
                                                field.offset + CommonPage.over_flow_field_header(),
-                                               field.offset + CommonPage.over_flow_field_header() + space_use,
+                                               field.offset + CommonPage.over_flow_field_header() + field_data_length,
                                                value.get_bytes()
                                                )
-                log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW,space_use,-1,-1)
+                log_struct.pack_into('<bHHii', page, field.offset, FIELD_OVER_FLOW,field.field_space_use,field_data_length,-1,-1)
 
             else:
-                page.shrink(field.offset + field.field_length + CommonPage.field_header_length(),
-                            -(field.field_length - space_use))
-
                 log_struct.set_page_range_data(page,
                                                field.offset + CommonPage.field_header_length(),
-                                               field.offset + CommonPage.field_header_length() + space_use,
+                                               field.offset + CommonPage.field_header_length() + field_data_length,
                                                value.get_bytes()
                                                )
-                log_struct.pack_into('<bi', page, field.offset, FIELD_NOT_OVER_FLOW, space_use)
+                log_struct.pack_into('<bHH', page, field.offset, FIELD_NOT_OVER_FLOW,field.field_space_use,field_data_length)
             return
-        # 不能在当页放下，一定是 over flow,能放多少放多少
+        # 不能在当页放下，一定是 over flow,(包括长度不可变的数据) 能放多少放多少
         log_struct.set_page_range_data(page,
                                        field.offset + CommonPage.over_flow_field_header(),
-                                       field.offset + CommonPage.over_flow_field_header() + field.field_length,
-                                       value.get_bytes()[:field.field_length]
+                                       field.offset + CommonPage.over_flow_field_header() + field.field_space_use,
+                                       value.get_bytes()[:field.field_space_use]
        )
         # 删除field over flow多余部分，重新写入
         if  field.over_flow_page and  field.over_flow_page != -1:
             self.container.get_page(field.over_flow_page).delete_by_record_id(field.over_flow_record)
         over_flow_page = self.get_over_flow_page(CommonPage.record_min_size() + CommonPage.over_flow_field_header())
         over_flow_record_id = over_flow_page.get_next_record_id()
-        log_struct.pack_into('<biii', page, field.offset, FIELD_OVER_FLOW, field.field_length, over_flow_page.page_num,
+        log_struct.pack_into('<bHHii', page, field.offset, FIELD_OVER_FLOW, field.field_space_use,field.field_space_use, over_flow_page.page_num,
                          over_flow_record_id)
-        page.write_long_field(value, field.field_length, over_flow_record_id, over_flow_page)
+        page.write_long_field(value, field.field_space_use, over_flow_record_id, over_flow_page)
 
     def update_by_record_id(self, row: Row, record_id: int):
         #! !!!! 一定要反向更新，因为每个field在调整时会shrink data，如果正向更新，后续的field的offset会
@@ -904,25 +933,26 @@ class CommonPage(BasePage):
             # 读取field
             field_offset = record_offset + cur_page.record_header_size()
             for i in range(record_header.col_num):
-                status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
-                field = Field(status, cur_page.page_num, field_offset, field_length)
+                status, field_space_use,field_data_length = log_struct.unpack_from('<bHH', cur_page.page_data, field_offset)
+                field = Field(status, cur_page.page_num, field_offset, field_space_use,field_data_length)
                 fields_list.append(field)
                 field_offset += cur_page.field_header_length()
                 if status == FIELD_NOT_OVER_FLOW_NULL :
-                    field_offset += field_length
+                    field_offset += field_space_use
                 elif status == FIELD_OVER_FLOW_NULL:
                     field_offset += self.over_flow_field_data_size()
+                    field_offset += field_space_use
                 elif status == FIELD_NOT_OVER_FLOW:
                     # 读取数据
-                    field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
-                    field_offset += field_length
+                    field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
+                    field_offset += field_space_use
                 else:
                     next_page_num, next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
                     # 跳过over flow部分
                     field_offset += self.over_flow_field_data_size()
                     # 读取数据
-                    field.value.extend(cur_page.page_data[field_offset:field_offset + field_length])
-                    field_offset += field_length
+                    field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
+                    field_offset += field_space_use
                     if  next_page_num != -1:
                         cur_page.read_over_flow_field(next_page_num, next_record_id, field)
             # 读取下一页
@@ -954,7 +984,7 @@ class CommonPage(BasePage):
             # 读取field
             field_offset = record_offset + cur_page.record_header_size()
             for i in range(record_header.col_num):
-                status, field_length = log_struct.unpack_from('<bi', cur_page.page_data, field_offset)
+                status, field_space_use,field_data_length = log_struct.unpack_from('<bHH', cur_page.page_data, field_offset)
                 field_offset += cur_page.field_header_length()
                 if status == FIELD_OVER_FLOW:
                     # 跳过数据部分
@@ -962,12 +992,12 @@ class CommonPage(BasePage):
                     if next_page_num != -1:
                         if  (next_page_num, next_record_id) not in wait_deleted:
                             wait_deleted.append((next_page_num, next_record_id))
-                    field_offset += field_length
+                    field_offset += field_space_use
                     field_offset += 4 + 4
                 elif status == FIELD_OVER_FLOW_NULL:
                     field_offset+=CommonPage.over_flow_field_data_size()
                 else:
-                    field_offset += field_length
+                    field_offset += field_space_use
             # 需要调整偏移量
             cur_page.shrink(record_offset + record_length, -record_length)
             # 删除slot,将被删除的slot移除到最后的位置
