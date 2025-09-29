@@ -455,21 +455,35 @@ def deserialization_row(v:bytearray)->Row|None:
 from collections import OrderedDict
 
 class ModelMetaClass(type):
+    #类型注册
+    __registry__ = []
     def __new__(cls, name, bases, attr):
         if name == 'ModelBase':
             return type.__new__(cls, name, bases, attr)
 
         #存储 字段->字段类型
         mappings = OrderedDict()
+
+        #添加父类字段
+        for base in bases:
+            if base in ModelMetaClass.__registry__:
+                for k,v in base.__mappings__.items():
+                    mappings[k] = v
+
+
         for k,v in attr.items():
             if isinstance(v,type) and  issubclass(v,Value):
                 mappings[k] = v
         # attr中的是类属性，实际使用的是实例属性，为了避免冲突，从attr中移除
         for k in mappings.keys():
-            attr.pop(k)
+            if k in attr:
+                attr.pop(k)
         #保存属性和映射之间的关系
         attr['__mappings__'] = mappings
-        return type.__new__(cls, name, bases, attr)
+        result =  type.__new__(cls, name, bases, attr)
+        #进行注册
+        ModelMetaClass.__registry__.append(result)
+        return result
 
 class ModelBase(dict,metaclass= ModelMetaClass):
     def __init__(self,**kwargs):
