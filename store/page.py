@@ -467,14 +467,14 @@ class CommonPage(BasePage):
             # 写入field的位置
             field_write_offset = record_offset_start + cur_page.record_header_size()
             # 写入field
-            # 1. 本次可以完全写完
-            if field_length + CommonPage.field_header_length() <= free_space:
+            #  !!!!!!! 1. 本次可以完全写完,但是也采用 FIELD_OVER_FLOW形式，方便扩容
+            if field_length + CommonPage.over_flow_field_header() <= free_space:
                 # 写入数据部分, field_space_use和field_data_length保持一致
-                log_struct.pack_into('<bHH', cur_page, field_write_offset, FIELD_NOT_OVER_FLOW, field_length,field_length)
+                log_struct.pack_into('<bHHii', cur_page, field_write_offset, FIELD_OVER_FLOW, field_length,field_length,-1,-1)
 
                 log_struct.set_page_range_data(cur_page,
-                                               field_write_offset + CommonPage.field_header_length(),
-                                               field_write_offset + CommonPage.field_header_length() + field_length,
+                                               field_write_offset + CommonPage.over_flow_field_header(),
+                                               field_write_offset + CommonPage.over_flow_field_header() + field_length,
                                                field.get_bytes()[write_from:]
                )
                 # 写入 record header
@@ -482,7 +482,7 @@ class CommonPage(BasePage):
                                  -1)
                 # 写入 slot table
                 log_struct.pack_into('<ii', cur_page, slot_offset_start, record_offset_start,
-                                 field_write_offset + CommonPage.field_header_length() + field_length - record_offset_start)
+                                 field_write_offset + CommonPage.over_flow_field_header() + field_length - record_offset_start)
                 write_from += field_length
                 cur_page.increase_slot_num()
                 break
@@ -711,12 +711,13 @@ class CommonPage(BasePage):
                 return
             else:
                 temp_next_page_num, temp_next_record_id = log_struct.unpack_from('<ii', cur_page.page_data, field_offset)
-                if temp_next_page_num == -1:
-                    return
                 # 跳过over flow部分
                 field_offset += self.over_flow_field_data_size()
                 # 读取数据
                 field.value.extend(cur_page.page_data[field_offset:field_offset + field_data_length])
+                #读取数据之后再判断是否需要推出
+                if temp_next_page_num == -1:
+                        return
                 cur_page = self.container.get_page(temp_next_page_num)
                 cur_slot = cur_page.get_slot_num_by_record_id(temp_next_record_id)
 
