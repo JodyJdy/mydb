@@ -1,6 +1,7 @@
 import struct
 import typing
 from abc import abstractmethod
+import bson
 
 from enum import Enum
 from typing import List, Any, Dict, Callable,Type
@@ -18,6 +19,7 @@ class  ValueType(Enum):
     LONG = 4
     BOOL = 5
     INT_ARRAY = 6
+    BSON = 7
 
     @staticmethod
     def from_int(i:int):
@@ -329,6 +331,50 @@ class IntArrayValue(Value):
         return IntArrayValue(None)
 
 
+class BsonValue(Value):
+
+    def __init__(self,value:Dict[Any,Any] | None):
+        super().__init__()
+        self.value = value
+        self.is_null = value is None
+
+    @staticmethod
+    def none():
+        return BsonValue(None)
+
+    @staticmethod
+    def from_bytes(value:bytearray)->Value|None:
+        if not value:
+            return None
+        return BsonValue(bson.loads(value))
+    @staticmethod
+    def type_enum() -> ValueType:
+        return ValueType.STR
+
+    def len_variable(self):
+        return True
+
+    def init_result(self):
+        self.bytes_content = bytearray()
+        if self.value:
+            self.bytes_content.extend(bson.dumps(self.value))
+
+    def space_use(self):
+        if self.is_null:
+            return 0
+        if not self.bytes_content:
+            self.init_result()
+        return len(self.bytes_content)
+
+    def get_bytes(self) -> bytearray:
+        if not self.bytes_content:
+            self.init_result()
+        return self.bytes_content
+
+    def __repr__(self):
+        return f"bson:{self.value}"
+
+
 class Row:
     """
     一个数据行里面的索引总是出现在前几列
@@ -412,6 +458,7 @@ def init_value_type_dict():
     for clazz in Value.__subclasses__():
         value_type_dict[clazz.type_enum()] = clazz
 
+# ValueType->Value的 字典
 value_type_dict: Dict[ValueType, typing.Type[Value]] = {}
 init_value_type_dict()
 
