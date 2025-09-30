@@ -1,5 +1,7 @@
 import struct
 import sys
+import time
+
 from store.values import *
 from store.container import *
 from store.log.binlog import binlog
@@ -35,3 +37,20 @@ def example2():
     print(p.read_slot(0))
     p.update_by_record_id(generate_row(["helloworld"]),0)
     print(p.read_slot(0))
+    p.update_by_record_id(generate_row(["helloworld"*20]),0)
+    print(p.read_slot(0))
+
+
+def example3():
+    """
+    测试刷新脏页时长， 页面越多 耗时越多
+    :return:
+    """
+    for i in range(20000):
+        p = container.new_common_page()
+        p.insert_slot(Row([StrValue.none()]),0)
+    start = time.time()
+    container.flush()
+    container.close()
+    print(time.time() -start)
+
