@@ -42,9 +42,16 @@ def write_meta_data(data):
 def read_meta_data():
     if not META_PATH.exists():
         meta_data ={
+            # container 名称 和 id 的映射关系
             "container_name_to_id": {
             },
             "container_id_to_name": {
+            },
+            # redo log 配置
+            "redo_log":{
+                "lsn":0,
+                "write_pos":0,
+                "check_point":0
             }
         }
         write_meta_data(meta_data)
