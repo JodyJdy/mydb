@@ -1,3 +1,4 @@
+import os
 import threading
 
 import config
@@ -291,6 +292,8 @@ class Container:
                 self.write_page(k,v.page_data)
                 v.dirty = False
         self.file.flush()
+        os.fsync(self.file.fileno())
+
 
     @staticmethod
     def open_container(container_name: str | None = None, log:bool = True):

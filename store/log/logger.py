@@ -149,14 +149,17 @@ class RotatingLogger:
         if free_space >= len(data):
             self.current_file.write(data)
             self.current_file.flush()
+            os.fsync(self.current_file.fileno())
         else:
             #分两次写
             self.current_file.write(data[0:free_space])
             self.current_file.flush()
+            os.fsync(self.current_file.fileno())
             #切换新文件
             self._rotate()
             self.current_file.write(data[free_space:])
             self.current_file.flush()
+            os.fsync(self.current_file.fileno())
 
     def close(self):
         with self.lock:
