@@ -35,7 +35,19 @@ class CacheablePage:
         self.container = container
         self.container_id = self.container.container_id
 
+    def write_page_cache(self):
+        """
+        写入文件的 page cache 但是不调用  file.flush()
+        :return:
+        """
+        self.container.write_single_page(self)
+
     def flush(self):
+        """
+        调用文件的 file.flush()方法，为了单个页执行 flush成本太高
+        几乎不会使用
+        :return:
+        """
         self.container.flush_single_page(self)
 
     def init(self):

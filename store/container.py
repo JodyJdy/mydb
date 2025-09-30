@@ -257,13 +257,33 @@ class Container:
     def close(self):
         self.file.close()
 
-    def flush_single_page(self,page:CommonPage):
+    def write_single_page(self,page:CacheablePage):
+        """
+        写入单页，到page cache 不 flush
+        :param page:
+        :return:
+        """
+        page.set_lsn(binlog.log_end_pos())
+        self.write_page(page.page_num,page.page_data)
+
+    def flush_page_cache(self):
+        """
+        刷新 page cache
+        :return:
+        """
+        self.file.flush()
+
+    def flush_single_page(self,page:CacheablePage):
         #刷新页面时设置lsn
         page.set_lsn(binlog.log_end_pos())
         self.write_page(page.page_num,page.page_data)
         self.file.flush()
 
     def flush(self):
+        """
+        刷新 container 所有 page，几乎不会用到
+        :return:
+        """
         for k, v in self.cache.items():
             log_end_pos = binlog.log_end_pos()
             if v.dirty:
