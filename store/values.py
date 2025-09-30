@@ -349,7 +349,7 @@ class BsonValue(Value):
         return BsonValue(bson.loads(value))
     @staticmethod
     def type_enum() -> ValueType:
-        return ValueType.STR
+        return ValueType.BSON
 
     def len_variable(self):
         return True
