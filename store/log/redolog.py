@@ -238,22 +238,23 @@ class RedoLogManager:
             return result
 
 
-
     def advance_checkpoint(self, advance_len):
         with self.write_lock:
-            self.check_pos+= advance_len
+            self.check_pos = (self.check_pos + advance_len) % self.file_size
+            self.global_check_pos += advance_len
 
 # 使用示例
 if __name__ == "__main__":
     log_manager = RedoLogManager(file_size=200,buffer_max_size=10)
-    content = b"helloworld12" *5
-    print(len(content))
-    log_manager.write_entry(content)
-    log_manager._flush_write_buffer()
-    print(log_manager.read(60))
-    print(log_manager.write_pos)
-    print(log_manager.read_pos)
-    print(log_manager.check_pos)
+    for i in range(10):
+        content = b"helloworld12" *15
+        log_manager.write_entry(content)
+        log_manager._flush_write_buffer()
+        print(log_manager.read(len(content)))
+        log_manager.advance_checkpoint(len(content))
+        print(log_manager.write_pos)
+        print(log_manager.read_pos)
+        print(log_manager.check_pos)
     # buffer = io.BytesIO()
     # buffer.write(b'hello')
     # v = buffer.getvalue()
