@@ -91,3 +91,15 @@ def create_log_directory_if_need():
     log_path = Path(LOG_FILE_PATH)
     if not log_path.exists():
         log_path.mkdir(parents=True)
+
+# redo log 单文件大小 1G
+REDO_LOG_FILE_PER_SIZE = 1024 * 1024 * 1024
+# 日志缓冲大小
+REDO_BUFFER_SIZE = 10 * 1024 * 1024
+# redo 日志文件路径
+REDO_LOG_FILE_PATH =Path(__file__).parent / "data" / "redo"
+
+def create_redo_log_directory_if_need():
+    log_path = Path(REDO_LOG_FILE_PATH)
+    if not log_path.exists():
+        log_path.mkdir(parents=True)
