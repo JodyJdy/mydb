@@ -198,3 +198,32 @@ def test_tree4():
     test_count(t)
     t.container.flush()
     t.container.close()
+
+
+def test_tree5():
+    """
+    测试 排序
+    :return:
+    """
+    info = BTreeInfo("my_tree5",-1,1,True,[IntValue,IntValue])
+    BTree.create_btree(info,True)
+    t = BTree.open_btree("my_tree5")
+    # t.insert(generate_row([1,1]))
+    # t.insert(generate_row([1,2]))
+    # t.insert(generate_row([1,3]))
+    # t.insert(generate_row([1,5]))
+    # t.insert(generate_row([1,6]))
+    # t.insert(generate_row([1,7]))
+    # t.insert(generate_row([1,8]))
+    # t.insert(generate_row([1,9]))
+    # t.insert(generate_row([1,10]))
+    test_count(t)
+    # node = t.search_part(generate_row([1]),asc=True)
+    # for i in range(node.row_num()):
+    #     print(node.get_row_i(i))
+    t.container.flush()
+    t.container.close()
+
+
+
+

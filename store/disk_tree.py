@@ -466,7 +466,44 @@ class BTree:
                 result.append(value_type.from_bytes(field.value))
         return Row(result)
 
+    def search_part(self,key,asc = True):
+        """
+        支持唯一索引/非唯一索引查询,并按照 key 进行排序
+         此时的key的长度 <= self.key_len
+        :param key:  要搜索的key
+        :param asc: 升序还是降序 (1,1),(1,2),(1,3) 如果升序搜索 (1,)  搜索的是最左边的，如果降序搜索，搜索的是最右边的
+        :return:
+        """
+        return self._search_part(key,self.tree,asc)
+
+    def _search_part(self,key,node,asc = True) -> LeafNode | None:
+        # 叶子节点直接返回
+        while not isinstance(node, LeafNode):
+            branch_node: BranchNode = node
+            i = 1
+            row_num = branch_node.row_num()
+            if row_num < 1:
+                raise Exception(f'B tree 结构错误:page:{branch_node.page_num()}')
+            while i < row_num:
+                cur_row_key = branch_node.get_row_i(i).key
+                if key < cur_row_key or (key == cur_row_key and asc):
+                    node = self.read_node(branch_node.get_row_i(i - 1).child)
+                    break
+                #什么也不做，进入下一轮
+                elif key == cur_row_key and not asc and i+1 < row_num and branch_node.get_row_i(i+1).key == key:
+                    pass
+                elif key == cur_row_key:
+                    node = self.read_node(branch_node.get_row_i(i).child)
+                    break
+                i += 1
+            if i == row_num:
+                node = self.read_node(branch_node.get_last_row().child)
+        return node
+
     def search(self, key):
+        """
+        支持唯一key查询
+        """
         node = self._search(key, self.tree)
         return node
 
