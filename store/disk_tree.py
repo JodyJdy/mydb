@@ -564,6 +564,7 @@ class BTree:
     def update_root(self):
         #btree 信息放在第一页
         btree_info_page = self.container.get_page(config.BTREE_INFO_PAGE_NUM)
+        #根据 BtreeInfo中 root值位置的下标更新内容，如果 BtreeInfo中 root位置发生了调整，这里也要调整
         btree_info_page.update_field_by_index(0,3,IntValue(self.tree.page_num()))
         btree_info_page.flush()
 
